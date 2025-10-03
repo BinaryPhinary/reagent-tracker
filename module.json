@@ -1,0 +1,16 @@
+{
+  "id": "reagent-tracker",
+  "title": "Reagent Tracker",
+  "description": "Tracks and consumes reagents for spellcasters.",
+  "version": "0.0.1",
+  "authors": [
+    {
+      "name": "Your Name"
+    }
+  ],
+  "compatibility": {
+    "minimum": 13,
+    "verified": 13
+  },
+  "esmodules": ["scripts/main.js"]
+}
