@@ -1,16 +1,36 @@
 {
   "id": "reagent-tracker",
   "title": "Reagent Tracker",
-  "description": "Tracks and consumes reagents for spellcasters.",
-  "version": "0.0.1",
+  "description": "Track and consume spellcasting reagents automatically. Provides an editable global reagent table and compendium sync.",
+  "version": "0.1.0",
+  "compatibility": {
+    "minimum": "13",
+    "verified": "13"
+  },
   "authors": [
     {
-      "name": "Eric Taylor"
+      "name": "Your Name",
+      "url": "https://github.com/yourname",
+      "email": "you@example.com"
     }
   ],
-  "compatibility": {
-    "minimum": 13,
-    "verified": 13
-  },
-  "esmodules": ["scripts/main.js"]
+  "esmodules": [
+    "scripts/main.js"
+  ],
+  "styles": [],
+  "packs": [
+    {
+      "label": "Reagents",
+      "name": "reagents",
+      "path": "packs/reagents.db",
+      "type": "Item",
+      "private": false
+    }
+  ],
+  "languages": [],
+  "socket": false,
+  "manifest": "https://raw.githubusercontent.com/yourname/reagent-tracker/main/module.json",
+  "download": "https://github.com/yourname/reagent-tracker/releases/latest/download/reagent-tracker.zip",
+  "license": "MIT",
+  "readme": "README.md"
 }
