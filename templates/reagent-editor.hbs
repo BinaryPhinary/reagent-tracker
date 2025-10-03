@@ -1,4 +1,4 @@
-<form class="reagent-editor">
+﻿<form class="reagent-editor">
     <div class="form-group">
         <label>Reagent Table (JSON)</label>
         <textarea name="table" rows="18" spellcheck="false">{{tableJson}}</textarea>
@@ -16,6 +16,16 @@
             </select>
             <button type="button" class="import-base">Import Base</button>
         </div>
+    </div>
+
+    <!-- ✅ Compendium sync moved inside the form -->
+    <div class="form-group">
+        <label>Compendium Sync</label>
+        <div class="flexrow">
+            <button type="button" class="import-compendium">Import from Packs</button>
+            <button type="button" class="export-compendium">Export to First Pack</button>
+        </div>
+        <p class="notes">Packs: {{configuredPacks}}</p>
     </div>
 
     <footer class="sheet-footer flexrow">

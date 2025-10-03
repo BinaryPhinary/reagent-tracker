@@ -8,9 +8,18 @@
   {
     "key": "diamond_dust",
     "name": "Diamond Dust",
-    "aliases": [ "diamonds dust", "powdered diamond" ],
+    "aliases": [ "powdered diamond" ],
     "unit": "gp",
-    "cost": 100
+    "cost": 100,
+    "consume": {
+      "mode": "quantity",
+      "perCast": 1
+    },
+    "source": {
+      "book": "PHB",
+      "pack": "reagent-tracker.reagents",
+      "page": 237
+    }
   },
   {
     "key": "incense_block",
