@@ -1,0 +1,31 @@
+[
+  {
+    "key": "bat_guano",
+    "name": "Bat Guano",
+    "unit": "oz",
+    "cost": 5
+  },
+  {
+    "key": "diamond_dust",
+    "name": "Diamond Dust",
+    "unit": "gp",
+    "cost": 100,
+    "link": {
+      "prefer": [ "flag", "uuid", "packName", "actorName" ],
+      "uuid": "Compendium.dnd5e.items.ABC123",
+      "pack": "dnd5e.items",
+      "itemName": "Diamond Dust",
+      "type": "consumable"
+    },
+    "consume": {
+      "mode": "quantity", // "quantity" | "uses"
+      "perCast": 1 // how many to subtract each time
+    }
+  },
+  {
+    "key": "incense_block",
+    "name": "Incense Block",
+    "unit": "ea",
+    "cost": 10
+  }
+]
