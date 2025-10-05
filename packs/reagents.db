@@ -1,0 +1,110 @@
+/**************************************************************
+ * Reagent Tracker — Seed world.reagents (v13-safe)
+ * Upsert by NAME (one item per display name).
+ * Uses Item.createDocuments for compendium creates.
+ **************************************************************/
+const MODULE_ID = "reagent-tracker";
+const PACK_KEY = "world.reagents"; // confirmed pack key
+const DEFAULT_IMG = "icons/commodities/gems/gem-faceted-teardrop-white.webp";
+const IMG_FROM_KEY = (key) => `modules/${MODULE_ID}/icons/${key}.webp`;
+
+// ---- SRD/PHB seed ----
+const SEED = [
+  {key:"charcoal_incense_herbs_10gp",name:"Charcoal, incense, and herbs",unit:"gp",cost:10,aliases:["find familiar incense","charcoal incense herbs"],consume:{mode:"quantity",perCast:1},sources:["Find Familiar (consumed)"]},
+  {key:"pearl_100gp",name:"Pearl",unit:"gp",cost:100,aliases:["identify pearl"],consume:{mode:"uses",perCast:0},sources:["Identify (not consumed)"]},
+  {key:"diamond_50gp",name:"Diamond (50 gp)",unit:"gp",cost:50,aliases:["chromatic orb diamond"],consume:{mode:"uses",perCast:0},sources:["Chromatic Orb (not consumed)"]},
+  {key:"lead_ink_10gp",name:"Lead-based ink",unit:"gp",cost:10,aliases:["illusory script ink"],consume:{mode:"quantity",perCast:1},sources:["Illusory Script (consumed)"]},
+  {key:"incense_offering_25gp",name:"Incense and offering",unit:"gp",cost:25,aliases:["divination incense offering"],consume:{mode:"quantity",perCast:1},sources:["Divination (consumed)"]},
+  {key:"powdered_diamond_200gp",name:"Powdered diamond",unit:"gp",cost:200,aliases:["glyph of warding diamond dust","diamond dust 200"],consume:{mode:"quantity",perCast:1},sources:["Glyph of Warding (consumed)"]},
+  {key:"diamond_dust_100gp",name:"Diamond dust (100 gp)",unit:"gp",cost:100,aliases:["stoneskin diamond dust","greater restoration diamond dust"],consume:{mode:"quantity",perCast:1},sources:["Stoneskin (consumed)","Greater Restoration (consumed)"]},
+  {key:"diamonds_300gp",name:"Diamonds (300 gp)",unit:"gp",cost:300,aliases:["revivify diamonds"],consume:{mode:"quantity",perCast:1},sources:["Revivify (consumed)"]},
+  {key:"diamond_500gp",name:"Diamond (500 gp)",unit:"gp",cost:500,aliases:["raise dead diamond"],consume:{mode:"quantity",perCast:1},sources:["Raise Dead (consumed)"]},
+  {key:"diamond_1000gp",name:"Diamond (1,000 gp)",unit:"gp",cost:1000,aliases:["resurrection diamond"],consume:{mode:"quantity",perCast:1},sources:["Resurrection (consumed)"]},
+  {key:"diamonds_25000gp",name:"Diamonds (25,000 gp)",unit:"gp",cost:25000,aliases:["true resurrection diamonds"],consume:{mode:"quantity",perCast:1},sources:["True Resurrection (consumed)"]},
+  {key:"bowl_1000gp",name:"Gem-encrusted bowl",unit:"gp",cost:1000,aliases:["heroes' feast bowl","heroes feast bowl"],consume:{mode:"quantity",perCast:1},sources:["Heroes’ Feast (consumed)"]},
+  {key:"scrying_focus_1000gp",name:"Scrying focus (reflective)",unit:"gp",cost:1000,aliases:["scrying focus mirror"],consume:{mode:"uses",perCast:0},sources:["Scrying (not consumed)"]},
+  {key:"jewel_1000gp",name:"Jewel (1,000 gp)",unit:"gp",cost:1000,aliases:["planar binding jewel"],consume:{mode:"quantity",perCast:1},sources:["Planar Binding (consumed)"]},
+  {key:"oils_unguents_1000gp",name:"Rare oils and unguents",unit:"gp",cost:1000,aliases:["reincarnate oils"],consume:{mode:"quantity",perCast:1},sources:["Reincarnate (consumed)"]},
+  {key:"incense_250gp_ivory_200gp",name:"Incense (250 gp) & 4 ivory strips (50 gp each)",unit:"gp",cost:450,aliases:["legend lore incense","ivory strips"],consume:{mode:"quantity",perCast:1},sources:["Legend Lore (consumed)"]},
+  {key:"herbs_oils_incense_1000gp",name:"Herbs, oils, and incense",unit:"gp",cost:1000,aliases:["hallow components"],consume:{mode:"quantity",perCast:1},sources:["Hallow (consumed)"]},
+  {key:"rare_chalks_inks_50gp",name:"Rare chalks and inks infused with precious gems",unit:"gp",cost:50,aliases:["teleportation circle chalks"],consume:{mode:"quantity",perCast:1},sources:["Teleportation Circle (consumed)"]},
+  {key:"divinatory_tools_100gp",name:"Divinatory tools",unit:"gp",cost:100,aliases:["find the path tools"],consume:{mode:"uses",perCast:0},sources:["Find the Path (not consumed)"]},
+  {key:"forbiddance_ruby_incense_1000gp",name:"Rare incense & powdered ruby",unit:"gp",cost:1000,aliases:["forbiddance ruby"],consume:{mode:"quantity",perCast:1},sources:["Forbiddance (consumed)"]},
+  {key:"magic_jar_container_500gp",name:"Gem/crystal/reliquary/ornate container",unit:"gp",cost:500,aliases:["magic jar container"],consume:{mode:"uses",perCast:0},sources:["Magic Jar (not consumed)"]},
+  {key:"secret_chest_5k_plus_50",name:"Exquisite chest (5,000 gp) & tiny replica (50 gp)",unit:"gp",cost:5050,aliases:["leomund's secret chest components","secret chest"],consume:{mode:"uses",perCast:0},sources:["Leomund’s Secret Chest (not consumed)"]}
+];
+
+(async () => {
+  if (!game.user.isGM) return ui.notifications.error("Run this as a GM.");
+
+  const pack = game.packs.get(PACK_KEY);
+  if (!pack) return ui.notifications.error(`Compendium not found: ${PACK_KEY}`);
+  if (pack.documentName !== "Item") return ui.notifications.error(`Pack ${PACK_KEY} is not an Item compendium.`);
+  if (pack.locked) { try { await pack.configure({ locked: false }); } catch (e) { console.warn("Could not unlock pack:", e); } }
+
+  // Build NAME -> _id map for upsert
+  const index = await pack.getIndex();
+  const byName = new Map(index.map(e => [e.name, e._id]));
+
+  const toCreate = [];
+  const toUpdate = [];
+
+  for (const row of SEED) {
+    const img = IMG_FROM_KEY(row.key) || DEFAULT_IMG;
+    const base = {
+      name: row.name,
+      type: "consumable",
+      img,
+      system: { description: { value: "" }, consumableType: "material", quantity: 0 },
+      flags: {
+        [MODULE_ID]: {
+          data: {
+            key: row.key,
+            aliases: row.aliases ?? [],
+            unit: row.unit ?? "ea",
+            cost: row.cost ?? 0,
+            consume: row.consume ?? { mode: "quantity", perCast: 1 },
+            sources: row.sources ?? []
+          }
+        }
+      }
+    };
+
+    const existingId = byName.get(row.name);
+    if (existingId) {
+      toUpdate.push({ _id: existingId, ...base });
+    } else {
+      toCreate.push(base);
+    }
+  }
+
+  // CREATE new docs (in compendium) via Item.createDocuments
+  let created = 0, updated = 0;
+  if (toCreate.length) {
+    try {
+      const createdDocs = await Item.createDocuments(toCreate, { pack: PACK_KEY });
+      created = createdDocs?.length ?? 0;
+      console.log("[Reagents] Created:", createdDocs.map(d => d.name));
+    } catch (err) {
+      console.error("[Reagents] Create error:", err);
+      ui.notifications.error("Error creating items — see console.");
+    }
+  }
+
+  // UPDATE existing docs
+  for (const upd of toUpdate) {
+    try {
+      await pack.updateDocument(upd);
+      updated++;
+      console.log(`[Reagents] Updated: ${upd.name}`);
+    } catch (err) {
+      console.error(`[Reagents] Update error for ${upd.name}:`, err);
+    }
+  }
+
+  // Force index/UI refresh
+  await pack.getIndex({ reload: true });
+  pack.render(true);
+
+  ui.notifications.info(`Reagents seeding complete: ${created} created, ${updated} updated in ${PACK_KEY}.`);
+})();
