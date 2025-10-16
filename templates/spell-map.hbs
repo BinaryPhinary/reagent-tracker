@@ -1,0 +1,114 @@
+<section class="spell-map">
+  <header class="flexrow" style="gap:.5rem; align-items:center; position:sticky; top:0; background:var(--color-bg,rgba(0,0,0,0)); padding:.25rem 0; z-index:1;">
+    <button type="button" data-action="scan-packs" title="Index configured spell packs (all spells)">
+      <i class="fas fa-search"></i> Index Packs
+    </button>
+    <button type="button" data-action="save" class="save" title="Save world overrides">
+      <i class="fas fa-save"></i> Save
+    </button>
+
+    <!-- 🛠 Repair Button -->
+    <button type="button" class="repair-compendium" title="Repair reagent UUIDs in the compendium and spell map">
+      <i class="fas fa-tools"></i> Repair Compendium Keys
+    </button>
+
+    <span class="muted" style="margin-left:.5rem;">Packs: {{packs}}</span>
+
+    <span style="margin-left:auto;"></span>
+
+    <label title="Filter by status">Filter:
+      <select name="filter">
+        <option value="">All</option>
+        <option value="unmapped">Unmapped</option>
+        <option value="guessed">Guessed</option>
+        <option value="confirmed">Confirmed</option>
+        <option value="staleUUID">Stale UUID</option>
+      </select>
+    </label>
+
+    <label title="Show only spells that natively have costly/consumed materials" style="display:flex; align-items:center; gap:.25rem;">
+      <input type="checkbox" name="onlyCostly" />
+      <span>Only costly/consumed</span>
+    </label>
+
+    <label title="Search spell or reagent name">Search:
+      <input type="text" name="search" placeholder="Spell or Reagent name"/>
+    </label>
+  </header>
+
+  {{#if empty}}
+    <div class="empty flexcol" style="gap:.5rem; padding:.75rem 0;">
+      <div class="muted">No entries yet.</div>
+      <div><button type="button" data-action="scan-packs"><i class="fas fa-search"></i> Index Packs</button></div>
+    </div>
+  {{/if}}
+
+  <p class="hint muted" style="margin:.25rem 0 .5rem 0;">
+    Total: {{counts.total}}
+    &nbsp;•&nbsp; Unmapped: {{counts.unmapped}}
+    &nbsp;•&nbsp; Guessed: {{counts.guessed}}
+    &nbsp;•&nbsp; Confirmed: {{counts.confirmed}}
+    &nbsp;•&nbsp; Stale: {{counts.stale}}
+  </p>
+
+  <table class="spell-map-table" style="width:100%; border-collapse:separate; border-spacing:0 .25rem;">
+    <thead>
+      <tr style="text-align:left;">
+        <th style="width:36%; padding:.25rem .5rem;">Spell</th>
+        <th style="width:18%; padding:.25rem .5rem;">Pack</th>
+        <th style="width:12%; padding:.25rem .5rem;">Status</th>
+        <th style="width:24%; padding:.25rem .5rem;">Reagent (from Compendium)</th>
+        <th style="width:10%; padding:.25rem .5rem; text-align:center;">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{#each rows}}
+      <tr
+        data-index="{{@index}}"
+        data-status="{{this.status}}"
+        data-spellname="{{this.spellNameCached}}"
+        data-costly="{{this.hasNativeCostOrConsumed}}"
+        style="background:rgba(0,0,0,0.06);"
+      >
+        <td style="padding:.5rem .5rem;">
+          <div class="spell-name" style="font-weight:600;">{{this.spellNameCached}}</div>
+          <div class="muted uuid" style="font-size:.85em; word-break:break-all;">{{this.spellUUID}}</div>
+        </td>
+
+        <td style="padding:.5rem .5rem;">
+          <span class="muted">{{this.spellPackCached}}</span>
+        </td>
+
+        <td style="padding:.5rem .5rem;">
+          <span class="status badge" style="text-transform:capitalize;">{{this.status}}</span>
+        </td>
+
+        <td class="reagent-cell" style="padding:.5rem .5rem;">
+          {{#if this.reagents}}
+            {{#with (lookup this.reagents 0) as |g|}}
+              <div style="font-weight:600;">{{g.reagentNameCached}}</div>
+              <div class="muted small" style="font-size:.9em;">
+                {{#if g.reagentKey}}key: {{g.reagentKey}}{{/if}}
+                {{#if g.reagentUUID}}uuid: {{g.reagentUUID}}{{/if}}
+                {{#if g.minCost}} | min {{g.minCost}} gp{{/if}}
+                | qty {{#if g.quantity}}{{g.quantity}}{{else}}1{{/if}}
+                | {{#if g.consumed}}consumed{{else}}not consumed{{/if}}
+              </div>
+            {{/with}}
+          {{else}}
+            <em class="muted">none</em>
+          {{/if}}
+        </td>
+
+        <td class="actions" style="padding:.25rem .25rem; text-align:center; white-space:nowrap;">
+          <!-- Keep pick-reagent for compendium selection -->
+          <button type="button" data-action="pick-reagent" data-index="{{@index}}" title="Pick reagent from compendium"><i class="fas fa-pen"></i></button>
+          <button type="button" data-action="mark-confirmed" data-index="{{@index}}" title="Mark confirmed"><i class="fas fa-check"></i></button>
+          <button type="button" data-action="mark-unmapped" data-index="{{@index}}" title="Mark unmapped"><i class="fas fa-undo"></i></button>
+          <button type="button" data-action="delete" data-index="{{@index}}" title="Remove row"><i class="fas fa-trash"></i></button>
+        </td>
+      </tr>
+      {{/each}}
+    </tbody>
+  </table>
+</section>
