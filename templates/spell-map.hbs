@@ -1,49 +1,83 @@
 <section class="spell-map">
-  <header class="flexrow" style="gap:.5rem; align-items:center; position:sticky; top:0; background:var(--color-bg,rgba(0,0,0,0)); padding:.25rem 0; z-index:1;">
-    <button type="button" data-action="scan-packs" title="Index configured spell packs (all spells)">
-      <i class="fas fa-search"></i> Index Packs
-    </button>
-    <button type="button" data-action="save" class="save" title="Save world overrides">
-      <i class="fas fa-save"></i> Save
-    </button>
+  <header
+    class="flexrow"
+    style="
+      gap:.75rem;
+      align-items:center;
+      position:sticky;
+      top:0;
+      background:#b8b8b8;
+      padding:.6rem .75rem;
+      z-index:2;
+      border-bottom:1px solid rgba(0,0,0,.2);
+      box-shadow:0 1px 0 rgba(0,0,0,.05);
+    "
+  >
+    <!-- Left column: Save / Index + Packs -->
+    <div class="flexcol" style="gap:.35rem; min-width:9rem;">
+      <button type="button" data-action="save" class="save" title="Save world overrides"
+        style="padding:.3rem .5rem; width:8rem; font-size:.85em;">
+        <i class="fas fa-save"></i> Save
+      </button>
+      <button type="button" data-action="scan-packs" title="Index configured spell packs (all spells)"
+        style="padding:.3rem .5rem; width:8rem; font-size:.85em;">
+        <i class="fas fa-search"></i> Index Packs
+      </button>
+      <div style="font-size:.95em; margin-top:.15rem;">Packs: {{packs}}</div>
+    </div>
 
-    <!-- 🛠 Repair Button -->
-    <button type="button" class="repair-compendium" title="Repair reagent UUIDs in the compendium and spell map">
-      <i class="fas fa-tools"></i> Repair Compendium Keys
-    </button>
+    <!-- Center column: Filter + Search -->
+    <div style="flex:1;">
+      <div
+        style="
+          display:grid;
+          grid-template-columns: 58px 12rem 18px auto;
+          grid-auto-rows: minmax(26px,auto);
+          align-items:center;
+          column-gap:.5rem;
+          row-gap:.45rem;
+        "
+      >
+        <!-- Row 1: Filter + Only costly/consumed -->
+        <label style="grid-column:1;">Filter:</label>
+        <select name="filter" style="grid-column:2; height:26px; width:10rem;">
+          <option value="">All</option>
+          <option value="unmapped">Unmapped</option>
+          <option value="guessed">Guessed</option>
+          <option value="confirmed">Confirmed</option>
+          <option value="staleUUID">Stale UUID</option>
+        </select>
+        <input type="checkbox" name="onlyCostly" style="grid-column:3; transform:scale(.85);" />
+        <span style="grid-column:4;">Only costly/consumed</span>
 
-    <span class="muted" style="margin-left:.5rem;">Packs: {{packs}}</span>
+        <!-- Row 2: Search -->
+        <label style="grid-column:1;">Search:</label>
+        <input
+          type="text"
+          name="search"
+          placeholder="Spell or Reagent name"
+          style="grid-column:2 / 5; height:26px; width:13rem; font-size:.9em;"
+        />
+      </div>
+    </div>
 
-    <span style="margin-left:auto;"></span>
-
-    <label title="Filter by status">Filter:
-      <select name="filter">
-        <option value="">All</option>
-        <option value="unmapped">Unmapped</option>
-        <option value="guessed">Guessed</option>
-        <option value="confirmed">Confirmed</option>
-        <option value="staleUUID">Stale UUID</option>
-      </select>
-    </label>
-
-    <label title="Show only spells that natively have costly/consumed materials" style="display:flex; align-items:center; gap:.25rem;">
-      <input type="checkbox" name="onlyCostly" />
-      <span>Only costly/consumed</span>
-    </label>
-
-    <label title="Search spell or reagent name">Search:
-      <input type="text" name="search" placeholder="Spell or Reagent name"/>
-    </label>
+    <!-- Right column: Repair -->
+    <div class="flexcol" style="align-items:center; margin-left:.5rem; min-width:13rem;">
+      <button
+        type="button"
+        class="repair-compendium"
+        title="Repair reagent UUIDs in the compendium and spell map"
+        style="background:none; border:none; cursor:pointer;"
+      >
+        <i class="fas fa-tools" style="font-size:1.35em;"></i>
+      </button>
+      <span style="font-weight:700; font-size:1.2em; margin-top:.25rem; text-align:center;">
+        Repair Compendium Keys
+      </span>
+    </div>
   </header>
 
-  {{#if empty}}
-    <div class="empty flexcol" style="gap:.5rem; padding:.75rem 0;">
-      <div class="muted">No entries yet.</div>
-      <div><button type="button" data-action="scan-packs"><i class="fas fa-search"></i> Index Packs</button></div>
-    </div>
-  {{/if}}
-
-  <p class="hint muted" style="margin:.25rem 0 .5rem 0;">
+  <p class="hint muted" style="margin:.35rem .5rem .5rem .5rem;">
     Total: {{counts.total}}
     &nbsp;•&nbsp; Unmapped: {{counts.unmapped}}
     &nbsp;•&nbsp; Guessed: {{counts.guessed}}
@@ -101,7 +135,6 @@
         </td>
 
         <td class="actions" style="padding:.25rem .25rem; text-align:center; white-space:nowrap;">
-          <!-- Keep pick-reagent for compendium selection -->
           <button type="button" data-action="pick-reagent" data-index="{{@index}}" title="Pick reagent from compendium"><i class="fas fa-pen"></i></button>
           <button type="button" data-action="mark-confirmed" data-index="{{@index}}" title="Mark confirmed"><i class="fas fa-check"></i></button>
           <button type="button" data-action="mark-unmapped" data-index="{{@index}}" title="Mark unmapped"><i class="fas fa-undo"></i></button>
