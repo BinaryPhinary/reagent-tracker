@@ -80,17 +80,21 @@ Hooks.once("ready", () => {
   if (mod) {
     mod.api = {
       ...(mod.api ?? {}),
-      //getTable: () => ReagentData.getTable(),
       setTable: (rows) => ReagentData.setTable(rows),
+      _extractValueGP,
       findReagentItemOnActor: findReagentItemOnActor_Auto,
       consumeReagent: consumeReagent_Auto,
       getSpellMap: () => SpellMapData.getMap(),
       setSpellMap: (rows) => SpellMapData.setMap(rows),
       runSpellMapBuilder,
-     //openReagentEditor: () => new ReagentEditor().render(true),
       openSpellMap: () => new SpellMapManager().render(true),
-      //openReagentPicker: (opts) => ReagentPicker.pick(opts),
       repairReagentCompendium,
+
+      // --- new helper exports for debug / external access ---
+      findUpgradedReagent,
+      getCanonicalReagentName,
+      promptUseHigherValue,
+
       _postPreambleRegistered: mod.api?._postPreambleRegistered ?? false
     };
     globalThis.reagentTracker = mod.api;
@@ -113,93 +117,74 @@ Hooks.once("ready", () => {
     }
   }
 
-// ---- Helper: copy reagent key (and UUID) from compendium source onto an actor item
-async function _rtBackfillReagentKeyFromCompSource(item) {
-  try {
-    if (!(item?.parent instanceof Actor)) return false;
+  // ---- Helper: copy reagent key (and UUID) from compendium source onto an actor item
+  async function _rtBackfillReagentKeyFromCompSource(item) {
+    try {
+      if (!(item?.parent instanceof Actor)) return false;
+      const src = item._stats?.compendiumSource ?? "";
+      if (!src.startsWith("Compendium.world.reagents.Item.")) return false;
 
-    // Foundry v13 stores this here (not core.sourceId)
-    const src = item._stats?.compendiumSource ?? "";
-    if (!src || !src.startsWith("Compendium.world.reagents.Item.")) return false;
+      const already = item.getFlag("reagent-tracker", "reagentKey");
+      if (already) return true;
 
-    // Already has a flag? nothing to do
-    const already = item.getFlag("reagent-tracker", "reagentKey");
-    if (already) return true;
+      const parts = src.split(".");
+      const packId = `${parts[1]}.${parts[2]}`;
+      const compId = parts[4];
+      const pack = game.packs.get(packId);
+      if (!pack) return false;
+      const doc = await pack.getDocument(compId);
+      if (!doc) return false;
 
-    // src = "Compendium.world.reagents.Item.<id>"
-    const parts = src.split(".");
-    const packId = `${parts[1]}.${parts[2]}`; // "world.reagents"
-    const compId = parts[4]; // document id
-    const pack = game.packs.get(packId);
-    if (!pack) return false;
+      const reagentKey = doc.getFlag("reagent-tracker", "key");
+      const reagentUUID = doc.uuid;
+      if (!reagentKey) return false;
 
-    const doc = await pack.getDocument(compId);
-    if (!doc) return false;
-
-    // Read data from the compendium record
-    const reagentKey = doc.getFlag("reagent-tracker", "key");
-    const reagentUUID = doc.uuid; // canonical compendium UUID
-
-    if (!reagentKey) return false;
-
-    // Write flags to the embedded document
-    await item.parent.updateEmbeddedDocuments("Item", [{
-      _id: item.id,
-      [`flags.${MODULE_ID}.reagentKey`]: reagentKey,
-      // Optional but handy for debugging/linking:
-      [`flags.${MODULE_ID}.reagentUUID`]: reagentUUID
-    }]);
-
-    console.log(`[${MODULE_ID}] linked '${item.name}' → key=${reagentKey}, uuid=${reagentUUID}`);
-    return true;
-  } catch (e) {
-    console.warn(`[${MODULE_ID}] backfill reagent key failed`, e);
-    return false;
-  }
-}
-
-// ---- Hook: when a new embedded Item is created, defer and backfill the key
-Hooks.on("createItem", (item, _opts, _userId) => {
-  // Only care about actor-owned items; compendium docs also fire this hook in some cases
-  if (!(item?.parent instanceof Actor)) return;
-
-  // Defer slightly so compendiumSource is populated and the item is fully registered
-  setTimeout(() => { _rtBackfillReagentKeyFromCompSource(item); }, 300);
-});
-
-// ---- One-time sweep on world load: fix any existing actor items that still lack the flag
-(async () => {
-  try {
-    const actors = game.actors.contents ?? [];
-    for (const a of actors) {
-      // Iterate items that appear to be from reagent pack but lack our flag
-      const items = a.items.contents ?? [];
-      const candidates = items.filter(it =>
-        !it.getFlag("reagent-tracker", "reagentKey") &&
-        it._stats?.compendiumSource?.startsWith("Compendium.world.reagents.Item.")
-      );
-      for (const it of candidates) await _rtBackfillReagentKeyFromCompSource(it);
+      await item.parent.updateEmbeddedDocuments("Item", [{
+        _id: item.id,
+        [`flags.${MODULE_ID}.reagentKey`]: reagentKey,
+        [`flags.${MODULE_ID}.reagentUUID`]: reagentUUID
+      }]);
+      console.log(`[${MODULE_ID}] linked '${item.name}' → key=${reagentKey}, uuid=${reagentUUID}`);
+      return true;
+    } catch (e) {
+      console.warn(`[${MODULE_ID}] backfill reagent key failed`, e);
+      return false;
     }
-  } catch (e) {
-    console.warn(`[${MODULE_ID}] ready-time reagent key sweep failed`, e);
   }
-})();
+
+  // ---- Hook: when a new embedded Item is created, defer and backfill the key
+  Hooks.on("createItem", (item, _opts, _userId) => {
+    if (!(item?.parent instanceof Actor)) return;
+    setTimeout(() => { _rtBackfillReagentKeyFromCompSource(item); }, 300);
+  });
+
+  // ---- One-time sweep on world load
+  (async () => {
+    try {
+      const actors = game.actors.contents ?? [];
+      for (const a of actors) {
+        const items = a.items.contents ?? [];
+        const candidates = items.filter(it =>
+          !it.getFlag("reagent-tracker", "reagentKey") &&
+          it._stats?.compendiumSource?.startsWith("Compendium.world.reagents.Item.")
+        );
+        for (const it of candidates) await _rtBackfillReagentKeyFromCompSource(it);
+      }
+    } catch (e) {
+      console.warn(`[${MODULE_ID}] ready-time reagent key sweep failed`, e);
+    }
+  })();
 
   // --- Core echo + consumption hooks ---
   installEchoOnlyHooks();
-});
+}); // ✅ This is the ONLY closing brace for Hooks.once("ready", ...)
+
 
 
 /* -------------------------------------------------------------------------------------------------
  *  DATA ACCESS LAYERS
  * ------------------------------------------------------------------------------------------------- */
-//const ReagentData = (globalThis.ReagentData && typeof globalThis.ReagentData.getTable === "function")
-//  ? globalThis.ReagentData
-//  : {
-//      getTable: () => game.settings.get(MODULE_ID, "reagentTable") ?? [],
-//      setTable: (rows) => game.settings.set(MODULE_ID, "reagentTable", Array.isArray(rows) ? rows : []),
-//      importBase: async () => {},
-//    };
+
 
 const SpellMapData = (globalThis.SpellMapData && typeof globalThis.SpellMapData.getMap === "function")
   ? globalThis.SpellMapData
@@ -227,58 +212,6 @@ const _onPostPreambleComplete = (wf) => {
     console.warn("[reagent-tracker] postPreambleComplete handler failed", e);
   }
 };
-
-
-/* -------------------------------------------------------------------------------------------------
- *  UI: REAGENT EDITOR
- * ------------------------------------------------------------------------------------------------- */
-//class ReagentEditor extends FormApplication {
-//  static get defaultOptions() {
-//    return foundry.utils.mergeObject(super.defaultOptions, {
-//      id: "reagent-editor",
-//      title: "Reagent Table",
-//      template: `modules/${MODULE_ID}/templates/reagent-editor.hbs`,
-//      width: 700,
-//      height: "auto",
-//      closeOnSubmit: true
-//    });
-//  }
-//  get isGM() { return game.user.isGM; }
-
-//  async getData() {
-//    if (!this.isGM) ui.notifications.warn("Only the GM can edit the reagent table.");
-//    const table = ReagentData.getTable();
-//    return {
-//      tableJson: JSON.stringify(table, null, 2),
-//      configuredPacks: getConfiguredPacks().join(", ")
-//    };
-//  }
-
-//  activateListeners(html) {
-//    super.activateListeners(html);
-//    html.find("button.close").on("click", () => this.close());
-//  }
-
-//  async _updateObject(_event, formData) {
-//    let rows;
-//    try {
-//      rows = JSON.parse(formData.table);
-//      if (!Array.isArray(rows)) throw new Error("JSON must be an array.");
-//      const seen = new Set();
-//      for (const r of rows) {
-//        if (r?.key) {
-//          if (seen.has(r.key)) throw new Error(`Duplicate key: ${r.key}`);
-//          seen.add(r.key);
-//        }
-//      }
-//    } catch (err) {
-//      console.error(err);
-//      return ui.notifications.error(`Invalid JSON: ${err.message}`);
-//    }
-//    await ReagentData.setTable(rows);
-//    ui.notifications.info("Reagent table saved.");
-//  }
-//}
 
 /* -------------------------------------------------------------------------------------------------
  *  UI: REAGENT PICKER
@@ -426,96 +359,6 @@ class ReagentPicker extends FormApplication {
     this._resolver?.(out);
   }
 }
-
-
-//This should be the orignal ReagentPicker code before trying to remove the reagent data pieces (not the compendium - that was to stay)
-//class ReagentPicker extends FormApplication {
-//  static get defaultOptions() {
-//    return foundry.utils.mergeObject(super.defaultOptions, {
-//      id: "reagent-picker",
-//      title: "Pick Reagent",
-//      template: `modules/${MODULE_ID}/templates/reagent-picker.hbs`,
-//      width: 520,
-//      height: "auto",
-//      closeOnSubmit: true
-//    });
-//  }
-
-//  static async pick({ current } = {}) {
-//    return new Promise((resolve) => {
-//      const dlg = new this(current ?? {});
-//      dlg._resolver = resolve;
-//      dlg.render(true);
-//    });
-//  }
-
-//  constructor(current) {
-//    super(current);
-//    this.current = current || {};
-//  }
-
-  
-//  async getData() {
-//    const table = ReagentData.getTable();
-
-//    const packKeys = getConfiguredPacks();
-//    const compendium = [];
-//    for (const key of packKeys) {
-//      const pack = game.packs.get(key);
-//      if (!pack) continue;
-//      const index = await pack.getIndex({ fields: ["name"] });
-//      const coll  = pack.collection?.startsWith("Compendium.") ? pack.collection : `Compendium.${pack.collection}`;
-//      compendium.push(...index.map(e => ({
-//        pack: key,
-//        id: e._id,
-//        name: e.name,
-//        uuid: `${coll}.${e._id}`
-//      })));
-//    }
-//    return { current: this.current, table, compendium };
-//  }
-
-//async _updateObject(_event, formData) {
-//  const out = {
-//    reagentUUID: null,
-//    reagentNameCached: null,
-//    reagentKey: null,
-//    minCost: Number(formData.minCost || 0) || null,
-//    quantity: Number(formData.quantity || 1) || 1,
-//    consumed: !!formData.consumed
-//  };
-
-//  const src = formData.source || "table";
-//  if (src === "table") {
-//    const key = formData.tableKey;
-//    const row = ReagentData.getTable().find(r => r.key === key);
-//    if (!row) { this._resolver?.(null); return; }
-//    out.reagentKey = row.key;
-//    out.reagentNameCached = row.name ?? row.key;
-//    if (out.minCost == null && row.cost) out.minCost = Number(row.cost) || null;
-
-    // --- NEW: try to resolve UUID automatically ---
-//    const pack = game.packs.get("world.reagents");
-//    if (pack) {
-//      const idx = await pack.getIndex({ fields: ["name"] });
-//      const match = idx.find(e => e.name.toLowerCase() === (row.name ?? row.key).toLowerCase());
-//      if (match) out.reagentUUID = `Compendium.world.reagents.Item.${match._id}`;
-//    }
-//  } 
-//  else if (src === "compendium") {
-//    const uuid = formData.compUuid;
-//    if (!uuid) { this._resolver?.(null); return; }
-//    out.reagentUUID = uuid;
-//    try {
-//      const doc = await fromUuid(uuid);
-//      out.reagentNameCached = doc?.name ?? uuid;
-//    } catch { out.reagentNameCached = uuid; }
-//  }
-
-//  this._resolver?.(out);
-//}
-
-//}
 
 
 /* -------------------------------------------------------------------------------------------------
@@ -740,28 +583,71 @@ async function runSpellMapBuilder() {
 }
 
 // ------------------------------------------------------------------------------------------------
-// 🧭 Repair Compendium Reagents — add missing reagent-tracker keys to all compendium entries
+// 🧭 Repair Compendium + Spell Map + Actor Items
 // ------------------------------------------------------------------------------------------------
 async function repairReagentCompendium() {
   const pack = game.packs.get("world.reagents");
   if (!pack) return ui.notifications.warn("Reagent pack not found (expected world.reagents)");
-  
-  const docs = await pack.getDocuments();
-  let fixed = 0;
 
+  const docs = await pack.getDocuments();
+  let fixedComp = 0, fixedMap = 0, fixedActors = 0;
+
+  // --- STEP 1: Ensure every reagent in the compendium has a key ---
   for (const doc of docs) {
-    const existing = doc.getFlag("reagent-tracker", "key");
-    if (!existing) {
-      const newKey = doc.name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "_");
-      await doc.setFlag("reagent-tracker", "key", newKey);
-      console.log(`[reagent-tracker] Repaired ${doc.name} → key=${newKey}`);
-      fixed++;
+    let existing = doc.getFlag("reagent-tracker", "key");
+    const expected = doc.name.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "_");
+    if (!existing || existing !== expected) {
+      await doc.setFlag("reagent-tracker", "key", expected);
+      console.log(`[${MODULE_ID}] Compendium fixed: ${doc.name} → key=${expected}`);
+      fixedComp++;
+      existing = expected;
     }
   }
 
-  ui.notifications.info(`Repaired ${fixed} reagent(s)`);
-  return fixed;
+  // Build quick lookup of canonical keys by reagent name
+  const canonical = new Map();
+  for (const d of docs) {
+    canonical.set(d.name.toLowerCase(), d.getFlag("reagent-tracker", "key"));
+  }
+
+  // --- STEP 2: Repair spell-map reagent keys ---
+  const map = game.settings.get(MODULE_ID, "spellReagentMap") ?? [];
+  for (const row of map) {
+    if (!row.reagents?.length) continue;
+    for (const g of row.reagents) {
+      const nameKey = (g.reagentNameCached ?? "").toLowerCase();
+      const correctKey = canonical.get(nameKey);
+      if (correctKey && g.reagentKey !== correctKey) {
+        console.log(`[${MODULE_ID}] Spell map fixed: ${row.spellNameCached} reagentKey ${g.reagentKey} → ${correctKey}`);
+        g.reagentKey = correctKey;
+        fixedMap++;
+      }
+    }
+  }
+  await game.settings.set(MODULE_ID, "spellReagentMap", map);
+
+  // --- STEP 3: Repair actor-owned reagent items ---
+  for (const actor of game.actors.contents ?? []) {
+    for (const it of actor.items.contents ?? []) {
+      const src = it._stats?.compendiumSource;
+      if (!src?.startsWith("Compendium.world.reagents.Item.")) continue;
+      const nameKey = it.name.toLowerCase();
+      const correctKey = canonical.get(nameKey);
+      const currentKey = it.getFlag(MODULE_ID, "reagentKey");
+      if (correctKey && currentKey !== correctKey) {
+        await it.setFlag(MODULE_ID, "reagentKey", correctKey);
+        console.log(`[${MODULE_ID}] Actor fixed: ${actor.name} item ${it.name} → key=${correctKey}`);
+        fixedActors++;
+      }
+    }
+  }
+
+  ui.notifications.info(
+    `Repaired ${fixedComp} compendium key(s), ${fixedMap} spell-map entry(ies), and ${fixedActors} actor item(s).`
+  );
+  return { fixedComp, fixedMap, fixedActors };
 }
+
 
 // Expose for console / UI access
 game.reagentTrackerRepair = repairReagentCompendium;
@@ -875,6 +761,165 @@ function echoReagentRequirement(item) {
 }
 
 /* -------------------------------------------------------------------------------------------------
+ *  HIGHER-VALUE REAGENT SUPPORT
+ * ------------------------------------------------------------------------------------------------- */
+
+/** Parse gp value from an actor's reagent item name (e.g. "Diamond (500 gp)"). 
+ * Used after canonical reagent lookup; not dependent on compendium data. */
+function _extractValueGP(name) {
+  // Match any parentheses containing digits and optional commas before "gp"
+  const m = String(name || "").match(/\(([\d,]+)\s*gp\)/i);
+  if (!m) return 0;
+  // Strip commas and convert to number
+  const num = Number(m[1].replace(/,/g, ""));
+  return isNaN(num) ? 0 : num;
+}
+
+
+/** Try to get the canonical reagent name from compendium or spell map flags. */
+async function getCanonicalReagentName(g) {
+  try {
+    if (g?.reagentUUID) {
+      const doc = await fromUuid(g.reagentUUID);
+      if (doc?.name) return doc.name;
+    }
+
+    if (g?.reagentKey) {
+      const packs = getConfiguredPacks();
+      for (const key of packs) {
+        const pack = game.packs.get(key);
+        if (!pack) continue;
+        const index = await pack.getIndex({ fields: ["name", "flags.reagent-tracker.key"] });
+        const entry = index.find(e =>
+          e?.flags?.["reagent-tracker"]?.key?.toLowerCase() === g.reagentKey.toLowerCase()
+        );
+        if (entry) {
+          const doc = await pack.getDocument(entry._id);
+          if (doc?.name) return doc.name;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`[${MODULE_ID}] getCanonicalReagentName failed`, err);
+  }
+  return g?.reagentNameCached ?? null;
+}
+
+/** Find a "better" reagent on the actor by canonical name, with value > reagent.minCost. */
+async function findUpgradedReagent(actor, reagent) {
+  if (!actor || !reagent?.reagentKey) return null;
+
+  // Step 1: find canonical reagent doc by key (not name)
+  const packs = getConfiguredPacks();
+  let canonicalDoc = null;
+  for (const key of packs) {
+    const pack = game.packs.get(key);
+    if (!pack) continue;
+    const index = await pack.getIndex({ fields: ["name", "flags.reagent-tracker.key"] });
+    const entry = index.find(e =>
+      e?.flags?.["reagent-tracker"]?.key?.toLowerCase() === reagent.reagentKey.toLowerCase()
+    );
+    if (entry) {
+      canonicalDoc = await pack.getDocument(entry._id);
+      break;
+    }
+  }
+
+  const baseName = canonicalDoc?.name
+    ? canonicalDoc.name.replace(/\s*\(\d+\s*gp\)/i, "").trim().toLowerCase()
+    : (reagent.reagentNameCached ?? "").toLowerCase().replace(/\s*\(\d+\s*gp\)/i, "").trim();
+
+  // Step 2: scan actor inventory for same reagentKey or baseName
+  const items = actor.items?.contents ?? [];
+  let best = null;
+  for (const it of items) {
+    const keyFlag = it.getFlag(MODULE_ID, "reagentKey");
+    const name = it.name.toLowerCase();
+    if (keyFlag?.toLowerCase() === reagent.reagentKey.toLowerCase() ||
+        name.includes(baseName)) {
+      const value = _extractValueGP(it.name);
+      if (value > (Number(reagent.minCost) || 0)) {
+        if (!best || value > best.valueGP) best = { item: it, valueGP: value };
+      }
+    }
+  }
+  return best;
+}
+
+
+/** Show chat prompt asking if player wishes to consume a more expensive reagent. */
+async function promptUseHigherValue(actor, baseReagent, upgraded) {
+  const speaker = ChatMessage.getSpeaker({ actor });
+  const content = `
+  <div class="reagent-tracker-prompt" style="padding:.5rem;">
+    💎 <b>${actor.name}</b> has a more valuable reagent available:<br>
+    <b>${upgraded.item.name}</b> (${upgraded.valueGP} gp) vs minimum ${baseReagent.minCost ?? 0} gp.<br><br>
+    Use it to cast the spell?<br><br>
+    <button class="rt-accept" style="background:#4a7350;color:white;padding:.25rem .75rem;border:none;border-radius:4px;margin-right:.5rem;">✅ Use</button>
+    <button class="rt-decline" style="background:#a33;color:white;padding:.25rem .75rem;border:none;border-radius:4px;">❌ Decline</button>
+  </div>`;
+
+  // 🧩 Prevent re-entry via Midi-QOL echo
+  if (game.modules.get("midi-qol")?.active) {
+    const stack = (new Error()).stack ?? "";
+    if (/midi-qol/i.test(stack)) {
+      console.debug(`[${MODULE_ID}] Skipping ChatMessage.create (inside Midi-QOL preCreateChatMessage)`);
+      return null;
+    }
+  }
+
+  const msg = await ChatMessage.create({
+    speaker,
+    content,
+    whisper: actor?.getOwners?.().map(u => u.id) ?? [game.user.id],
+    flags: { [MODULE_ID]: { isPrompt: true } }
+  });
+
+  return new Promise(resolve => {
+    Hooks.once(`rtPrompt:${msg.id}`, resolve);
+  });
+}
+
+
+  Hooks.on("renderChatMessage", (message, html) => {
+  // ✅ Skip if not reagent prompt or if already handled by Midi’s echo
+  if (!html.find(".reagent-tracker-prompt").length) return;
+  if (!message.flags?.[MODULE_ID]?.isPrompt) return;
+
+  const root = html[0];
+  if (root?.dataset?.rtBound === "1") return;
+  root.dataset.rtBound = "1";
+
+  const safeDelete = (msg) => {
+    setTimeout(async () => {
+      try { await msg.delete(); }
+      catch (err) {
+        if (!/does not exist/i.test(String(err?.message ?? ""))) {
+          console.warn(`[${MODULE_ID}] safeDelete failed`, err);
+        }
+      }
+    }, 200);
+  };
+
+  html.find(".rt-accept").on("click", ev => {
+    ev.preventDefault();
+    Hooks.callAll(`rtPrompt:${message.id}`, true);
+    safeDelete(message);
+  });
+
+  html.find(".rt-decline").on("click", ev => {
+    ev.preventDefault();
+    Hooks.callAll(`rtPrompt:${message.id}`, false);
+    safeDelete(message);
+  });
+});
+
+
+
+
+
+
+/* -------------------------------------------------------------------------------------------------
  *  CONSUMPTION CORE
  * ------------------------------------------------------------------------------------------------- */
 
@@ -934,7 +979,6 @@ function _makeConsumeKey(item, ctxId) {
   return `${a}:${i}:${c}`;
 }
 
-
 async function maybeConsumeForCast(item, ctxId) {
   try {
     if (!game.settings.get(MODULE_ID, "autoConsumeOnCast")) return true;
@@ -949,7 +993,32 @@ async function maybeConsumeForCast(item, ctxId) {
 
     // ensure we have something to consume; echo already told us amounts
     const { qty: haveQty } = countActorReagent(actor, g);
-    if (haveQty <= 0) return true; // do not block here
+
+    // --- NEW: check for higher-value alternative (runs when base reagent is missing) ---
+    if (haveQty <= 0 && g.minCost) {
+      const upgraded = await findUpgradedReagent(actor, g);
+      if (upgraded) {
+        const accept = await promptUseHigherValue(actor, g, upgraded);
+        if (accept) {
+          // Consume one of the upgraded item, but retain the base reagentKey
+          const res = await consumeReagent_Auto(
+            actor,
+            { reagentKey: g.reagentKey, reagentNameCached: upgraded.item.name, reagentUUID: g.reagentUUID },
+            1
+          );
+          console.log(
+            `[${MODULE_ID}] ${actor.name} used higher-value reagent ${upgraded.item.name} (${upgraded.valueGP} gp) → consumed ${res.consumed}`
+          );
+        } else {
+          console.log(`[${MODULE_ID}] ${actor.name} declined use of higher-value reagent ${upgraded.item.name}`);
+        }
+        return true; // stop normal flow either way
+      }
+    }
+
+    // If no upgraded reagent found and no normal reagent either → skip quietly
+    if (haveQty <= 0) return true;
+
 
     const key = _makeConsumeKey(item, ctxId);
     if (_castConsumeGuards.has(key)) return true;
@@ -960,7 +1029,9 @@ async function maybeConsumeForCast(item, ctxId) {
     const who  = actor?.name ?? "(actor)";
     const sNam = item?.name ?? "(spell)";
     const rNam = g.reagentNameCached ?? g.reagentKey ?? g.reagentUUID ?? "(reagent)";
-    console.log(`[${MODULE_ID}] t+${D.now()}ms | CONSUME ${who} ${sNam}: ${rNam} → used ${res.consumed} (updates=${res.updates}, deleted=${res.deleted})`);
+    console.log(
+      `[${MODULE_ID}] t+${D.now()}ms | CONSUME ${who} ${sNam}: ${rNam} → used ${res.consumed} (updates=${res.updates}, deleted=${res.deleted})`
+    );
 
     return true;
   } catch (e) {
@@ -968,6 +1039,7 @@ async function maybeConsumeForCast(item, ctxId) {
     return true;
   }
 }
+
 
 /* -------------------------------------------------------------------------------------------------
  *  HOOKS (echo + consumption; no blocking)
@@ -978,11 +1050,13 @@ function installEchoOnlyHooks() {
     echoReagentRequirement(item);
   });
 
-  // Core DnD5e: consume once per item use
+  // Core DnD5e: consume once per item use - if its a spell prefer midi
   onHook("dnd5e.useItem", async (item /*, config, options */) => {
-    if (!item || item.type !== "spell") return;
-    await maybeConsumeForCast(item, "dnd5e.useItem");
-  });
+  if (!item || item.type !== "spell") return;
+  // 🔒 If Midi-QOL is active and user prefers Midi, skip the core hook
+  if (game.modules.get("midi-qol")?.active && game.settings.get(MODULE_ID, "preferMidi")) return;
+  await maybeConsumeForCast(item, "dnd5e.useItem");
+});
 
   const midiActive = !!game.modules.get("midi-qol")?.active;
   if (midiActive) {
@@ -1034,11 +1108,6 @@ function registerSettings() {
     scope: "world", config: true, type: Boolean, default: true
   });
 
-  //game.settings.register(MODULE_ID, "reagentTable", {
-  //  name: "Reagent Table",
-  //  hint: "World storage for the reagent table.",
-  //  scope: "world", config: false, type: Object, default: []
-  //});
   game.settings.register(MODULE_ID, "compendiumPacks", {
     name: "Reagent Compendium Packs",
     hint: "Comma-separated list of packs, e.g. 'reagent-tracker.reagents,my-xge.reagents'",
@@ -1069,13 +1138,6 @@ function registerSettings() {
     hint: "When a mapped spell is cast and the mapping marks the reagent as consumed, automatically deduct it from the caster’s inventory.",
     scope: "world", config: true, type: Boolean, default: true
   });
-
-  //game.settings.registerMenu(MODULE_ID, "openEditor", {
-  //  name: "Open Reagent Table",
-  //  label: "Open Reagent Table",
-  //  icon: "fas fa-flask",
-  //  type: ReagentEditor, restricted: true
-  //});
 
   game.settings.registerMenu(MODULE_ID, "openSpellMap", {
     name: "Open Spell Map",
