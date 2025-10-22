@@ -1,9 +1,11 @@
-﻿// --- Reagent Tracker (quiet build: no global hook spam, DEBUG off) ---
+import { findUpgradedReagentOnActor } from "./reagent-intel.js";
+
+// --- Reagent Tracker (quiet build: no global hook spam, DEBUG off) ---
 "use strict";
 
 const MODULE_ID = "reagent-tracker";
 const DEBUG = false;
-
+console.log("[reagent-tracker] main.js loaded — waiting for ready...");
 /* -------------------------------------------------------------------------------------------------
  *  DEBUG HELPERS (silent by default)
  * ------------------------------------------------------------------------------------------------- */
@@ -55,6 +57,7 @@ function onHook(name, fn) {
   });
 }
 
+
 // ==============================
 // Reagent Tracker — Lifecycle & Public API
 // ==============================
@@ -70,61 +73,531 @@ Handlebars.registerHelper('sort', function (arr, field) {
   );
 });
 
-
 Hooks.once("init", () => {
   registerSettings();
 });
 
-Hooks.once("ready", () => {
+Hooks.once("ready", async () => {
   const mod = game.modules.get(MODULE_ID);
+  console.log("[reagent-tracker] Hook ready fired!");
   if (mod) {
     mod.api = {
       ...(mod.api ?? {}),
       setTable: (rows) => ReagentData.setTable(rows),
-      _extractValueGP,
-      findReagentItemOnActor: findReagentItemOnActor_Auto,
-      consumeReagent: consumeReagent_Auto,
       getSpellMap: () => SpellMapData.getMap(),
       setSpellMap: (rows) => SpellMapData.setMap(rows),
       runSpellMapBuilder,
       openSpellMap: () => new SpellMapManager().render(true),
       repairReagentCompendium,
 
-      // --- new helper exports for debug / external access ---
-      findUpgradedReagent,
-      getCanonicalReagentName,
-      promptUseHigherValue,
-
       _postPreambleRegistered: mod.api?._postPreambleRegistered ?? false
     };
-    globalThis.reagentTracker = mod.api;
 
-    // --- midi-qol integration: reagent auto-consume at a reliable point ---
-    if (game.modules.get("midi-qol")?.active) {
-      if (!mod.api._postPreambleRegistered) {
-        Hooks.on("midi-qol.postPreambleComplete", (wf) => {
-          try {
-            if (wf?.item) maybeConsumeForCast(wf.item, wf.id);
-          } catch (e) {
-            console.warn(`[${MODULE_ID}] postPreambleComplete handler failed`, e);
-          }
-        });
-        mod.api._postPreambleRegistered = true;
-        console.log(`[${MODULE_ID}] midi-qol.postPreambleComplete hook registered`);
-      }
+    // 🔗 Global bindings
+    globalThis.reagentTracker = {
+      ...(globalThis.reagentTracker ?? {}),
+      ...mod.api
+    };
+    globalThis.runSpellMapBuilder = runSpellMapBuilder;
+    globalThis.reagentTracker.enforceReagents = enforceReagents;
+    globalThis.reagentTracker.hasReagentsSync = hasReagentsSync;
+    globalThis.reagentTracker.consumeReagentFromInventory = consumeReagentFromInventory
+
+    // 🔗 Also attach the reagentIntel subsystem if not already initialized
+    if (globalThis.reagentTracker?.reagentIntel) {
+      globalThis.reagentTracker.reagentIntel.findUpgradedReagentOnActor = findUpgradedReagentOnActor;
+      console.log(`[${MODULE_ID}] reagentIntel upgrade finder attached successfully (existing subsystem).`);
     } else {
-      console.warn(`[${MODULE_ID}] midi-qol not active — reagent auto-consume hook not registered.`);
+      globalThis.reagentTracker.reagentIntel = { findUpgradedReagentOnActor };
+      console.log(`[${MODULE_ID}] reagentIntel subsystem created and upgrade finder attached.`);
+
     }
   }
 
-  // ---- Helper: copy reagent key (and UUID) from compendium source onto an actor item
+
+  // =============================================================
+  //  REAGENT ENFORCEMENT (sync + async from intel cache)
+  // =============================================================
+
+  function hasReagentsSync(actor, item) {
+  try {
+    if (!actor || !item) return true;
+
+    const intel = reagentTracker.reagentIntel?.cache?.get(actor.id);
+    if (!intel) return true; // cache not ready → fail open
+
+    const spellState = intel.spells?.[item.id];
+    if (!spellState) return true; // spell not mapped
+
+    // --- Determine availability by reagentKey first, then by upgrade name
+    const key = spellState.reagentKey;
+    const hasByKey = key && actor.items.some(i => i.getFlag(MODULE_ID, "reagentKey") === key);
+    const hasByUpgrade = spellState.hasUpgrade && !!actor.items.get(spellState.upgrade?.itemId);
+
+    if (hasByKey || hasByUpgrade) return true;
+
+    console.warn(`[reagent-tracker] ${actor.name} lacks reagent for ${item.name}`);
+    return false;
+  } catch (err) {
+    console.error("[reagent-tracker] hasReagentsSync error", err);
+    return true;
+  }
+}
+
+
+// =====================================================================================
+//  PROMPT USE HIGHER VALUE — cache-aware version (GM + Player compatible)
+// =====================================================================================
+  async function promptUseHigherValue(actor, item, upgraded) {
+    try {
+      const speaker = ChatMessage.getSpeaker({ actor });
+      const upgradeName = upgraded?.itemName ?? upgraded?.item?.name ?? "(unknown)";
+      const valueGP = upgraded?.valueGP ?? "?";
+      const baseCost = upgraded?.minCost ?? 0;
+
+      const content = `
+        <div class="reagent-tracker-prompt" style="padding:.5rem;">
+          💎 <b>${actor.name}</b> has a more valuable reagent available for <b>${item.name}</b>:<br>
+          <b>${upgradeName}</b> (${valueGP} gp) vs minimum ${baseCost} gp.<br><br>
+          Use it to cast the spell?<br><br>
+          <button class="rt-accept" style="background:#4a7350;color:white;padding:.25rem .75rem;border:none;border-radius:4px;margin-right:.5rem;">✅ Use</button>
+          <button class="rt-decline" style="background:#a33;color:white;padding:.25rem .75rem;border:none;border-radius:4px;">❌ Decline</button>
+        </div>`;
+
+      // 🧩 Avoid duplicate prompts when Midi-QOL echoes chat message creation
+      if (game.modules.get("midi-qol")?.active) {
+        const stack = (new Error()).stack ?? "";
+        if (/preCreateChatMessage/i.test(stack) && /midi-qol/i.test(stack)) {
+          console.debug(`[${MODULE_ID}] Skipping prompt creation inside Midi-QOL preCreateChatMessage`);
+          return null;
+        }
+      }
+
+      // Wait a brief moment to let Midi initialize workflow chat
+      await new Promise(r => setTimeout(r, 250));
+
+      // --- Build chat prompt ---
+      const chatData = {
+        speaker,
+        content,
+        whisper: [],          // visible to all (GM + players)
+        flags: { [MODULE_ID]: { isPrompt: true } }
+      };
+
+      console.log(`[${MODULE_ID}] promptUseHigherValue → awaiting response for ${actor.name} ${item.name}`);
+      const chat = await ChatMessage.create(chatData, {});
+      console.log(`[${MODULE_ID}] promptUseHigherValue message created id=${chat.id}`);
+
+      // Wait for it to appear in DOM
+      await new Promise(r => setTimeout(r, 300));
+      const html = document.querySelector(`[data-message-id="${chat.id}"]`);
+      console.log(`[${MODULE_ID}] promptUseHigherValue found html=${!!html}`);
+
+      // --- Button handling ---
+      if (html) {
+        const acceptBtn = html.querySelector(".rt-accept");
+        const declineBtn = html.querySelector(".rt-decline");
+
+        const safeDelete = async () => {
+          await new Promise(r => setTimeout(r, 200));
+          try { await chat.delete(); } catch (err) { /* ignore */ }
+        };
+
+        if (acceptBtn) {
+          acceptBtn.addEventListener("click", ev => {
+            ev.preventDefault();
+            console.log(`[${MODULE_ID}] ACCEPT clicked for ${chat.id}`);
+            Hooks.callAll(`rtPrompt:${chat.id}`, { ok: true, upgraded });
+            safeDelete();
+          });
+        }
+
+        if (declineBtn) {
+          declineBtn.addEventListener("click", ev => {
+            ev.preventDefault();
+            console.log(`[${MODULE_ID}] DECLINE clicked for ${chat.id}`);
+            Hooks.callAll(`rtPrompt:${chat.id}`, { ok: false });
+            safeDelete();
+          });
+        }
+      }
+
+      // --- Wait for result (one-time hook) ---
+      return new Promise(resolve => {
+        Hooks.once(`rtPrompt:${chat.id}`, result => resolve(result));
+      });
+
+    } catch (err) {
+      console.error(`[${MODULE_ID}] promptUseHigherValue error`, err);
+      return { ok: false };
+    }
+  }
+
+  // --- Debounced notification helper (prevents double toasts) ---
+  let _rtToastShown = false;
+  function safeNotify(type, msg, timeout = 900) {
+    if (_rtToastShown) return;
+    _rtToastShown = true;
+    ui.notifications[type](msg);
+    setTimeout(() => { _rtToastShown = false; }, timeout);
+  }
+
+  // --- Asynchronous reagent enforcement using cached intel ---
+  async function enforceReagents(wf) {
+    try {
+      const actor = wf?.actor;
+      const item  = wf?.item;
+      if (!actor || !item) return true;
+
+      const intel = reagentTracker.reagentIntel?.cache?.get(actor.id);
+      const spellState = intel?.spells?.[item.id];
+
+      if (!spellState) {
+        console.log(`[reagent-tracker] ${item.name} → no cached reagent data`);
+        return true; // nothing to enforce
+      }
+
+      const { hasExact, hasUpgrade, missing, upgrade, reagentKey } = spellState;
+      console.log(`[reagent-tracker] enforceReagents → ${actor.name} ${item.name} | exact=${hasExact}, upgrade=${hasUpgrade}`);
+
+      // --- Reuse any prior prompt approval
+      if (wf.rtApprovedUpgrade) {
+        console.log(`[reagent-tracker] using previously approved upgrade: ${wf.rtApprovedUpgrade.itemName}`);
+        return true;
+      }
+
+    // --- No exact reagent, but an upgrade is available → prompt
+    if (!hasExact && hasUpgrade && upgrade) {
+      if (wf.rtPromptOpen) {
+        console.log(`[reagent-tracker] prompt already open — waiting`);
+        return false;
+      }
+
+      wf.rtPromptOpen = true;
+      const upgraded = {
+        item: actor.items.get(upgrade.itemId),
+        valueGP: upgrade.valueGP,
+        reagentKey
+      };
+
+      const res = await promptUseHigherValue(actor, item, upgraded);
+      wf.rtPromptOpen = false;
+
+      if (res?.ok && res?.upgraded) {
+        wf.rtApprovedUpgrade = res.upgraded;
+        console.log(`[reagent-tracker] upgrade approved: ${res.upgraded.item?.name}`);
+        return true;
+      }
+
+      console.warn(`[reagent-tracker] ${item.name} was not cast — user declined higher-value reagent.`);
+      return false;
+    }
+
+    // --- No reagent at all → block
+    if (missing) {
+      console.warn(`[reagent-tracker] ${item.name} missing required reagents — spell blocked.`);
+      return false;
+    }
+
+      return true;
+    } catch (err) {
+      console.error("[reagent-tracker] enforceReagents (cache) error", err);
+      return true; // fail open on error
+    }
+  }
+
+  // Prevent double-consumption during the same cast
+  const _castConsumeGuards = new Set();
+  function _makeConsumeKey(item, ctxId) {
+    const a = item?.actor?.id ?? "noactor";
+    const i = item?.id ?? "noitem";
+    const c =
+      ctxId ??
+      (typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${a}:${i}:${Date.now()}:${Math.random()}`);
+    return `${a}:${i}:${c}`;
+  }
+
+// =====================================================================================
+//  CONSUMPTION LOGIC — Unified handler for reagent usage after successful spell cast
+// =====================================================================================
+async function consumptionLogic(wf) {
+  try {
+    const actor = wf?.actor;
+    const item  = wf?.item;
+    if (!actor || !item) return true;
+
+    const intel = reagentTracker.reagentIntel?.cache?.get(actor.id);
+    if (!intel) return true;
+
+    const spellEntry = intel.spells?.[item.id];
+    if (!spellEntry) {
+      console.log(`[reagent-tracker] ${item.name} → not reagent-linked or cache missing`);
+      return true;
+    }
+
+    // Guard: if missing, nothing to consume
+    if (spellEntry.missing || spellEntry.hasMissing) {
+      console.log(`[reagent-tracker] ${actor.name} ${item.name} skipped consumption (missing reagent).`);
+      return true;
+    }
+
+    // --- Decide which reagent to consume
+    let reagentItem = null;
+    let logLabel = "(unknown)";
+
+    // 1. If the player approved an upgrade
+    if (wf?.rtApprovedUpgrade && spellEntry.upgrade) {
+      const upName = spellEntry.upgrade.itemName?.toLowerCase() ?? "";
+      reagentItem =
+        actor.items.get(spellEntry.upgrade.itemId) ||
+        actor.items.find(i => i.name.toLowerCase() === upName);
+      logLabel = spellEntry.upgrade.itemName ?? "(upgrade)";
+      console.log(`[reagent-tracker] ${actor.name} ${item.name} consuming approved upgrade.`);
+    }
+
+    // 2. Otherwise, consume standard reagent by key first
+    else if (spellEntry.hasExact && spellEntry.reagentKey) {
+      reagentItem = actor.items.find(
+        i => i.getFlag(MODULE_ID, "reagentKey") === spellEntry.reagentKey
+      );
+      logLabel = reagentItem?.name ?? spellEntry.reagentKey;
+      console.log(`[reagent-tracker] ${actor.name} ${item.name} consuming standard reagent.`);
+    }
+
+    // 3. Otherwise, skip (e.g. upgrade exists but not approved)
+    else if (spellEntry.hasUpgrade && !wf?.rtApprovedUpgrade) {
+      console.log(`[reagent-tracker] ${actor.name} ${item.name} skipped consumption (upgrade available but not used).`);
+      return true;
+    }
+
+    if (!reagentItem) {
+      console.warn(`[reagent-tracker] ${actor.name} ${item.name} could not locate reagent item — skipping consumption.`);
+      return true;
+    }
+
+
+    // Double-consume guard (workflow-scoped)
+    const guardKey = `${actor.id}:${item.id}:${wf?.uuid || wf?.id}`;
+    if (_castConsumeGuards.has(guardKey)) {
+      console.log(`[reagent-tracker] duplicate consumption guard for ${item.name} — skipping.`);
+      return true;
+    }
+    _castConsumeGuards.add(guardKey);
+
+    // --- Perform consumption
+    const qtyNeeded = spellEntry.quantity ?? 1;
+    const res = await consumeReagentFromInventory(actor, reagentItem, qtyNeeded);
+
+    console.log(
+      `[reagent-tracker] CONSUME ${actor.name} ${item.name}: ${logLabel} → used ${res.consumed} (updates=${res.updates}, deleted=${res.deleted})`
+    );
+
+    // Refresh intel after inventory mutation
+    setTimeout(() => {
+      try {
+        reagentTracker.reagentIntel.buildActorReagentState(actor);
+        console.log(`[reagent-tracker] Auto-refreshed reagent intel for ${actor.name} after ${item.name}`);
+      } catch (err) {
+        console.warn(`[reagent-tracker] intel refresh failed after ${actor.name} cast ${item.name}`, err);
+      }
+    }, 400);
+
+    // Clear any approved upgrade pointer to avoid bleed-over
+    if (wf) wf.rtApprovedUpgrade = null;
+
+    return true;
+  } catch (err) {
+    console.error("[reagent-tracker] consumptionLogic error", err);
+    return true; // fail open
+  }
+}
+
+
+
+// -------------------------------------------------------------------------------------
+// Canonical consumer: decrement a specific reagent in the actor's inventory
+// Accepts either an Item (preferred) or a reagent descriptor with { reagentKey }
+// -------------------------------------------------------------------------------------
+async function consumeReagentFromInventory(actor, reagentOrItem, qty = 1) {
+  try {
+    if (!actor || !reagentOrItem || qty <= 0) {
+      console.warn("[reagent-tracker] consumeReagentFromInventory invalid args");
+      return { consumed: 0, updates: 0, deleted: 0 };
+    }
+
+    // Resolve an Item5e to consume:
+    // - If reagentOrItem is an Item, use it directly
+    // - Else, try to find by reagentKey on the actor (first match)
+    let itemDoc = null;
+
+    // Case A: passed an Item directly
+    if (reagentOrItem?.document || reagentOrItem?.type) {
+      // Item-like object
+      const id = reagentOrItem.id ?? null;
+      itemDoc = id ? actor.items.get(id) : reagentOrItem;
+    }
+
+    // Case B: passed a cached reagent object (upgrade or base) with an itemId
+    if (!itemDoc && reagentOrItem?.itemId) {
+      itemDoc = actor.items.get(reagentOrItem.itemId);
+    }
+
+    // Case C: passed a reagent descriptor with a reagentKey flag
+    if (!itemDoc && reagentOrItem?.reagentKey) {
+      itemDoc = actor.items.find(i => i.getFlag(MODULE_ID, "reagentKey") === reagentOrItem.reagentKey);
+    }
+
+    if (!itemDoc) {
+      console.warn("[reagent-tracker] consumeReagentFromInventory could not resolve inventory item to consume.");
+      return { consumed: 0, updates: 0, deleted: 0 };
+    }
+
+    const name = itemDoc.name ?? (reagentOrItem.name || reagentOrItem.reagentNameCached || reagentOrItem.reagentKey || "(reagent)");
+    const current = Number(itemDoc.system?.quantity ?? 0) || 0;
+    if (current <= 0) {
+      console.warn(`[reagent-tracker] ${name} has quantity 0 — nothing to consume.`);
+      return { consumed: 0, updates: 0, deleted: 0 };
+    }
+
+    const take = Math.min(qty, current);
+    const newQty = current - take;
+
+    if (newQty > 0) {
+      await actor.updateEmbeddedDocuments("Item", [{ _id: itemDoc.id, "system.quantity": newQty }]);
+      console.log(`[reagent-tracker] consumed ${take} of ${name} (remaining ${newQty}).`);
+      return { consumed: take, updates: 1, deleted: 0 };
+    } else {
+      await actor.deleteEmbeddedDocuments("Item", [itemDoc.id]);
+      console.log(`[reagent-tracker] consumed ${take} and removed empty stack: ${name}.`);
+      return { consumed: take, updates: 0, deleted: 1 };
+    }
+  } catch (err) {
+    console.error("[reagent-tracker] consumeReagentFromInventory error", err);
+    return { consumed: 0, updates: 0, deleted: 0, error: err };
+  }
+}
+
+  // --- 2) dnd5e: block synchronously right at click ----------------------
+  Hooks.on("dnd5e.preUseActivity", (activity, config, options) => {
+    const item = activity?.item;
+    const actor = item?.actor;
+    if (!actor || !item) return true;
+
+    // HARD SYNC GATE — no async/await here
+    const ok = hasReagentsSync(actor, item);
+    if (!ok) {
+      console.warn(`[reagent-tracker] ${item.name} blocked by reagent check (preUseActivity sync)`);
+      ui.notifications.warn(`${item.name} was not cast — you lack the required material components.`);
+
+      // If a workflow is already attached, try to freeze it
+      try {
+        const wf = config?.workflow ?? item?.workflow ?? activity?.workflow;
+        if (wf) {
+          wf.aborted = true;
+          wf.suspended = true;
+          wf._aborted = true; // older code paths still peek at this
+        }
+      } catch (e) {
+        console.warn("[reagent-tracker] could not mark workflow aborted/suspended", e);
+      }
+
+      // Optionally kick off the full async enforcement just for logging/UX
+      // (don’t await)
+      try { reagentTracker.enforceReagents(actor, item, config); } catch (_) {}
+
+      return false; // ← IMPORTANT: cancel immediately
+    }
+
+    return true;
+  });
+
+  Hooks.on("midi-qol.preItemRollV2", async (wrapper) => {
+    try {
+      // 🧩 Unwrap if nested inside .workflow
+      const wf = wrapper?.workflow ?? wrapper;
+      const wfKeys = Object.keys(wf ?? {});
+      console.log(`[reagent-tracker] midi-qol.preItemRollV2 triggered`, wf);
+      console.log(`[reagent-tracker] workflow keys:`, wfKeys);
+
+      const item = wf?.item;
+      const actor = wf?.actor;
+      const actName = wf?.activity?.name ?? "(no activity)";
+      const itemName = item?.name ?? "(no item)";
+      const actorName = actor?.name ?? "(no actor)";
+
+      if (!item || !actor) {
+        console.warn(`[reagent-tracker] preItemRollV2 fired with missing item/actor — activity=${actName}`);
+        return true;
+      }
+
+      if (item?.type !== "spell") {
+        console.log(`[reagent-tracker] preItemRollV2 skipping non-spell item: ${itemName}`);
+        return true;
+      }
+
+      // 🟢 EARLY BYPASS — recast from higher reagent acceptance
+      const recastFlag = await item.getFlag(MODULE_ID, "recastFromPrompt");
+      if (recastFlag) {
+        await item.unsetFlag(MODULE_ID, "recastFromPrompt");
+        console.log(`[reagent-tracker] bypass: recastFromPrompt for ${itemName}`);
+        return true; // ✅ allow cast to proceed unblocked
+      }
+
+      console.log(`[reagent-tracker] preItemRollV2 valid — ${actorName} casting ${itemName}`);
+
+      // 🧮 Enforce reagent requirements
+      const ok = await reagentTracker.enforceReagents(wf);  // pass workflow, not item/actor
+      console.log(`[reagent-tracker] enforceReagents(${itemName}) returned:`, ok);
+
+      if (ok) return true; // ✅ allow when reagents are satisfied
+
+      // 🚫 Spell blocked due to missing reagents
+      console.warn(`[reagent-tracker] ${itemName} blocked by reagent check (midi-qol.preItemRollV2)`);
+      ui.notifications.warn(`${itemName} was not cast — you lack the required material components.`);
+
+      // Suspend & prevent consumption
+      wf.aborted = wf.suspended = wf._aborted = wf._suspended = true;
+      wf.config = wf.config || {};
+      wf.config.consumeSpellSlot = false;
+      wf.config.consumeResource = false;
+      wf.config.consumeUsage = false;
+
+      console.log(`[reagent-tracker] workflow aborted/suspended for ${itemName}`);
+      return false; // 🔴 stop the workflow
+    } catch (err) {
+      console.error("[reagent-tracker] Error in midi-qol.preItemRollV2", err);
+      return true; // fail open
+    }
+  });
+
+  // --- Consume reagent (upgrade or normal) after successful cast, then refresh intel -------------
+  Hooks.on("midi-qol.postRollFinished", async (wf) => {
+    try {
+      await consumptionLogic(wf);
+    } catch (err) {
+      console.error("[reagent-tracker] postRollFinished error", err);
+    } finally {
+      _castConsumeGuards.clear();
+      console.log(`[reagent-tracker] cleared consumption guards after workflow ${wf?.item?.name ?? wf?.id}`);
+    }
+  });
+
+
+
+  console.log("[reagent-tracker] Just before _rtBackfill!");
+
+  // ------------------------------------------------------------------------------------------------
+  // 🔧 Ready-time reagent key finalization
+  // ------------------------------------------------------------------------------------------------
   async function _rtBackfillReagentKeyFromCompSource(item) {
     try {
       if (!(item?.parent instanceof Actor)) return false;
       const src = item._stats?.compendiumSource ?? "";
       if (!src.startsWith("Compendium.world.reagents.Item.")) return false;
 
-      const already = item.getFlag("reagent-tracker", "reagentKey");
+      const already = item.getFlag(MODULE_ID, "reagentKey");
       if (already) return true;
 
       const parts = src.split(".");
@@ -135,15 +608,17 @@ Hooks.once("ready", () => {
       const doc = await pack.getDocument(compId);
       if (!doc) return false;
 
-      const reagentKey = doc.getFlag("reagent-tracker", "key");
+      const reagentKey = doc.getFlag(MODULE_ID, "key");
       const reagentUUID = doc.uuid;
       if (!reagentKey) return false;
 
-      await item.parent.updateEmbeddedDocuments("Item", [{
-        _id: item.id,
-        [`flags.${MODULE_ID}.reagentKey`]: reagentKey,
-        [`flags.${MODULE_ID}.reagentUUID`]: reagentUUID
-      }]);
+      await item.parent.updateEmbeddedDocuments("Item", [
+        {
+          _id: item.id,
+          [`flags.${MODULE_ID}.reagentKey`]: reagentKey,
+          [`flags.${MODULE_ID}.reagentUUID`]: reagentUUID
+        }
+      ]);
       console.log(`[${MODULE_ID}] linked '${item.name}' → key=${reagentKey}, uuid=${reagentUUID}`);
       return true;
     } catch (e) {
@@ -155,42 +630,48 @@ Hooks.once("ready", () => {
   // ---- Hook: when a new embedded Item is created, defer and backfill the key
   Hooks.on("createItem", (item, _opts, _userId) => {
     if (!(item?.parent instanceof Actor)) return;
-    setTimeout(() => { _rtBackfillReagentKeyFromCompSource(item); }, 300);
+    setTimeout(() => _rtBackfillReagentKeyFromCompSource(item), 300);
   });
 
-  // ---- One-time sweep on world load
-  (async () => {
-    try {
-      const actors = game.actors.contents ?? [];
-      for (const a of actors) {
-        const items = a.items.contents ?? [];
-        const candidates = items.filter(it =>
-          !it.getFlag("reagent-tracker", "reagentKey") &&
-          it._stats?.compendiumSource?.startsWith("Compendium.world.reagents.Item.")
-        );
-        for (const it of candidates) await _rtBackfillReagentKeyFromCompSource(it);
+  // ---- One-time sweep on ready
+  console.log("[reagent-tracker] ... starting ready-time backfill sweep");
+  const actors = game.actors.contents ?? [];
+  let fixedCount = 0;
+  for (const actor of actors) {
+    for (const item of actor.items.contents ?? []) {
+      const src = item._stats?.compendiumSource ?? "";
+      if (src.startsWith("Compendium.world.reagents.Item.")) {
+        const ok = await _rtBackfillReagentKeyFromCompSource(item);
+        if (ok) fixedCount++;
       }
-    } catch (e) {
-      console.warn(`[${MODULE_ID}] ready-time reagent key sweep failed`, e);
     }
-  })();
+  }
 
-  // --- Core echo + consumption hooks ---
-  installEchoOnlyHooks();
-}); // ✅ This is the ONLY closing brace for Hooks.once("ready", ...)
-
+  console.log(`[${MODULE_ID}] Ready-time reagent key backfill complete — ${fixedCount} item(s) linked.`);
+});
 
 
 /* -------------------------------------------------------------------------------------------------
  *  DATA ACCESS LAYERS
  * ------------------------------------------------------------------------------------------------- */
 
-
 const SpellMapData = (globalThis.SpellMapData && typeof globalThis.SpellMapData.getMap === "function")
   ? globalThis.SpellMapData
   : {
       getMap: () => game.settings.get(MODULE_ID, "spellReagentMap") ?? [],
-      setMap: (rows) => game.settings.set(MODULE_ID, "spellReagentMap", Array.isArray(rows) ? rows : []),
+
+      // --- Enhanced setter: also emit update hook
+      setMap: async (rows) => {
+        const arr = Array.isArray(rows) ? rows : [];
+        await game.settings.set(MODULE_ID, "spellReagentMap", arr);
+
+        // 🔔 Notify all listeners (e.g. reagentIntel) that Spell Map has changed
+        Hooks.callAll(`${MODULE_ID}.spellMapUpdated`, arr);
+
+        console.log(`[${MODULE_ID}] Spell Map updated → ${arr.length} entries`);
+        return arr;
+      },
+
       packsToScan: () => {
         const raw = game.settings.get(MODULE_ID, "spellPacksToScan") ?? "";
         return String(raw).split(",").map(s => s.trim()).filter(Boolean);
@@ -202,16 +683,6 @@ function getConfiguredPacks() {
   return String(raw).split(",").map(s => s.trim()).filter(Boolean);
 }
 
-// ---- midi-qol integration: single source of truth for reagent consumption
-const _onPostPreambleComplete = (wf) => {
-  try {
-    if (!wf?.item) return;
-    // Use the per-cast workflow id so our guard never collides between casts
-    maybeConsumeForCast(wf.item, wf.id);
-  } catch (e) {
-    console.warn("[reagent-tracker] postPreambleComplete handler failed", e);
-  }
-};
 
 /* -------------------------------------------------------------------------------------------------
  *  UI: REAGENT PICKER
@@ -360,7 +831,6 @@ class ReagentPicker extends FormApplication {
   }
 }
 
-
 /* -------------------------------------------------------------------------------------------------
  *  UI: SPELL MAP MANAGER
  * ------------------------------------------------------------------------------------------------- */
@@ -402,6 +872,8 @@ class SpellMapManager extends FormApplication {
   activateListeners(html) {
     super.activateListeners(html);
 
+    // --- Core controls ------------------------------------------------------
+
     html.find("[data-action='scan-packs']").on("click", async () => {
       try {
         const btn = html.find("[data-action='scan-packs']");
@@ -427,7 +899,8 @@ class SpellMapManager extends FormApplication {
 
     html.find("[name='filter'], [name='search']").on("input change", () => this.#applyFilter(html));
 
-    // 🧪 Updated Reagent Picker logic with de-link support
+    // --- Reagent Picker -----------------------------------------------------
+
     html.find("[data-action='pick-reagent']").on("click", async (ev) => {
       const idx = Number(ev.currentTarget.dataset.index);
       const rows = SpellMapData.getMap();
@@ -437,7 +910,7 @@ class SpellMapManager extends FormApplication {
       const picked = await ReagentPicker.pick({ current: row });
 
       if (!picked) {
-        // 🧹 De-linked: clear the reagent mapping entirely
+        // 🧹 De-linked
         rows[idx].reagents = [];
         rows[idx].status = "unmapped";
         ui.notifications.info(`Reagent link removed for "${row.spellNameCached}".`);
@@ -458,6 +931,8 @@ class SpellMapManager extends FormApplication {
       await SpellMapData.setMap(rows);
       this.render(true);
     });
+
+    // --- Row controls -------------------------------------------------------
 
     html.find("[data-action='mark-confirmed']").on("click", async (ev) => {
       const idx = Number(ev.currentTarget.dataset.index);
@@ -494,8 +969,30 @@ class SpellMapManager extends FormApplication {
         ui.notifications.info(`Repaired ${repaired} reagent(s) in world.reagents.`);
       });
     }
+
+    // --- 🧩 NEW: Per-spell and select-all blocking toggles ------------------
+
+    // Per-row checkbox toggle
+    html.find("input[data-action='toggle-block']").on("change", async (ev) => {
+      const idx = Number(ev.currentTarget.dataset.index);
+      const rows = SpellMapData.getMap();
+      if (!rows[idx]) return;
+      rows[idx].blockIfMissing = ev.currentTarget.checked;
+      await SpellMapData.setMap(rows);
+    });
+
+    // Top "select all" checkbox
+    html.find("input[data-action='toggle-block-all']").on("change", async (ev) => {
+      const checked = ev.currentTarget.checked;
+      const rows = SpellMapData.getMap();
+      for (const r of rows) r.blockIfMissing = checked;
+      await SpellMapData.setMap(rows);
+      // visually update all visible checkboxes
+      html.find("input[data-action='toggle-block']").prop("checked", checked);
+    });
   }
 
+  // --- Filtering logic (unchanged) -----------------------------------------
   #applyFilter(html) {
     const filter = html.find("[name='filter']").val();
     const q = String(html.find("[name='search']").val() || "").toLowerCase();
@@ -514,9 +1011,10 @@ class SpellMapManager extends FormApplication {
 }
 
 
-
 /* -------------------------------------------------------------------------------------------------
- *  SPELL MAP BUILDER
+ *  SPELL MAP BUILDER (v28 updated)
+ *  - Uses _stats.compendiumSource (preferred stable ID)
+ *  - Falls back to doc.uuid if missing (non-compendium spells)
  * ------------------------------------------------------------------------------------------------- */
 async function runSpellMapBuilder() {
   const packs = SpellMapData.packsToScan();
@@ -533,54 +1031,77 @@ async function runSpellMapBuilder() {
   for (const key of packs) {
     try {
       const pack = game.packs.get(key);
-      if (!pack) { console.warn(`${MODULE_ID}: Pack not found: ${key}`); continue; }
+      if (!pack) {
+        console.warn(`[${MODULE_ID}] Pack not found: ${key}`);
+        continue;
+      }
+
       const docs = await pack.getDocuments();
       for (const doc of docs) {
         try {
           if (doc.type !== "spell") continue;
           scanned++;
-          const m = doc.system?.materials ?? {};
-          const costly = Number(m.cost || 0) > 0;
-          const consumed = !!m.consumed;
+
+          const mats = doc.system?.materials ?? {};
+          const costly = Number(mats.cost || 0) > 0;
+          const consumed = !!mats.consumed;
           if (!(costly || consumed)) { skipped++; continue; }
 
+          // --- Determine canonical spell identifier
+          const spellUUID = doc._stats?.compendiumSource ?? doc.uuid;
+
           const entry = {
-            spellUUID: doc.uuid,
+            spellUUID,
             spellNameCached: doc.name,
             spellPackCached: key,
             reagents: [],
             status: "unmapped",
+            blockIfMissing: true,
             notes: "",
             lastChecked: new Date().toISOString()
           };
 
-          if (!byUUID.has(doc.uuid)) {
-            byUUID.set(doc.uuid, entry);
+          if (!byUUID.has(spellUUID)) {
+            byUUID.set(spellUUID, entry);
             added++;
           } else {
-            const prev = byUUID.get(doc.uuid);
+            const prev = byUUID.get(spellUUID);
             prev.spellNameCached = doc.name;
             prev.spellPackCached = key;
             prev.lastChecked = new Date().toISOString();
-            byUUID.set(doc.uuid, prev);
+            byUUID.set(spellUUID, prev);
           }
-        } catch (e) { console.error(`${MODULE_ID}: Error processing spell in ${key}`, e); errors++; }
+        } catch (e) {
+          console.error(`[${MODULE_ID}] Error processing spell in ${key}`, e);
+          errors++;
+        }
       }
-    } catch (e) { console.error(`${MODULE_ID}: Error scanning pack ${key}`, e); errors++; }
+    } catch (e) {
+      console.error(`[${MODULE_ID}] Error scanning pack ${key}`, e);
+      errors++;
+    }
   }
 
   const merged = Array.from(byUUID.values());
   await SpellMapData.setMap(merged);
 
-  // Keep the GM whisper, but it's not console spam.
+  // 🧭 GM whisper summary (non-spammy)
   ChatMessage.create({
     speaker: ChatMessage.getSpeaker(),
-    content: `<div class="reagent-tracker-msg">🧭 <b>${MODULE_ID}</b>: Scanned ${scanned} spells; added <b>${added}</b>, skipped ${skipped}, errors ${errors}. Total entries: ${merged.length}.</div>`,
+    content: `<div class="reagent-tracker-msg">
+      🧭 <b>${MODULE_ID}</b>: Scanned ${scanned} spells; added <b>${added}</b>,
+      skipped ${skipped}, errors ${errors}. Total entries: ${merged.length}.
+    </div>`,
     whisper: ChatMessage.getWhisperRecipients("GM").map(u => u.id)
   });
 
+  console.log(`[${MODULE_ID}] Spell Map builder complete — scanned=${scanned}, added=${added}, skipped=${skipped}, total=${merged.length}`);
   return { scanned, added, skipped, errors, total: merged.length };
 }
+
+
+// Expose for console / UI access
+game.reagentTrackerRepair = repairReagentCompendium;
 
 // ------------------------------------------------------------------------------------------------
 // 🧭 Repair Compendium + Spell Map + Actor Items
@@ -624,7 +1145,9 @@ async function repairReagentCompendium() {
       }
     }
   }
-  await game.settings.set(MODULE_ID, "spellReagentMap", map);
+
+  // ✅ Use SpellMapData.setMap() instead of direct settings.set()
+  await SpellMapData.setMap(map);
 
   // --- STEP 3: Repair actor-owned reagent items ---
   for (const actor of game.actors.contents ?? []) {
@@ -648,439 +1171,6 @@ async function repairReagentCompendium() {
   return { fixedComp, fixedMap, fixedActors };
 }
 
-
-// Expose for console / UI access
-game.reagentTrackerRepair = repairReagentCompendium;
-
-
-/* -------------------------------------------------------------------------------------------------
- *  SPELL→REAGENT LOOKUP + INVENTORY CHECK + ECHO
- * ------------------------------------------------------------------------------------------------- */
-function getSpellMapArray() {
-  try {
-    const rows = SpellMapData?.getMap?.();
-    return Array.isArray(rows) ? rows : [];
-  } catch (e) {
-    D.warn("SpellMapData.getMap failed", { error: e });
-    return [];
-  }
-}
-
-function findSpellMapEntryForItem(item) {
-  const rows = getSpellMapArray();
-  if (!rows.length) return null;
-
-  const uuid = item?.uuid ?? item?._uuid ?? null;
-  const name = (item?.name || "").toLowerCase();
-
-  if (uuid) {
-    const byUUID = rows.find(r => r?.spellUUID === uuid && Array.isArray(r?.reagents) && r.reagents.length);
-    if (byUUID) return byUUID;
-  }
-
-  const byName = rows.find(r =>
-    (r?.spellNameCached || "").toLowerCase() === name &&
-    Array.isArray(r?.reagents) && r.reagents.length
-  );
-  if (byName) return byName;
-
-  const partial = rows.find(r =>
-    typeof r?.spellNameCached === "string" &&
-    r.spellNameCached.toLowerCase().startsWith(name) &&
-    r.status === "confirmed" &&
-    Array.isArray(r?.reagents) && r.reagents.length
-  );
-  return partial ?? null;
-}
-
-function _normalize(str) { return String(str || "").trim().toLowerCase(); }
-
-/** Return all matching reagent items (best-effort) on an actor. */
-function findReagentItemOnActor_Auto(actor, reagent) {
-  if (!actor) return [];
-  const targetName = _normalize(reagent?.reagentNameCached || reagent?.reagentKey || reagent?.reagentUUID);
-  const targetKey  = _normalize(reagent?.reagentKey);
-  const out = [];
-
-  // Actor5e.items is a Collection; iterate contents (or fallback)
-  const iter = actor.items?.contents ?? actor.items ?? [];
-  for (const it of iter) {
-    const iname = _normalize(it?.name);
-    const ikey  = _normalize(it?.flags?.[MODULE_ID]?.reagentKey);
-
-    if (ikey && targetKey && ikey === targetKey) { out.push(it); continue; }
-    if (targetName && iname === targetName) { out.push(it); continue; }
-    if (targetName && iname.startsWith(targetName)) { out.push(it); continue; }
-  }
-  return out;
-}
-
-function countActorReagent(actor, reagent) {
-  const items = findReagentItemOnActor_Auto(actor, reagent);
-  let qty = 0;
-  for (const it of items) qty += Number(it?.system?.quantity ?? 1) || 0;
-  // annotate the match “type” just for logs
-  let match = null;
-  if (items.length) {
-    const hadKey   = items.some(it => _normalize(it.flags?.[MODULE_ID]?.reagentKey) &&
-                                      _normalize(it.flags?.[MODULE_ID]?.reagentKey) === _normalize(reagent?.reagentKey));
-    const hadExact = items.some(it => _normalize(it.name) === _normalize(reagent?.reagentNameCached));
-    match = hadKey ? "reagentKey" : (hadExact ? "cachedName" : "nameStartsWith");
-
-  }
-  return { qty, match, items };
-}
-
-function echoReagentRequirement(item) {
-  const entry = findSpellMapEntryForItem(item);
-  if (!entry) return;
-
-  const g = entry.reagents[0] ?? null;
-  if (!g) return;
-
-  // Inventory check
-  const actor = item?.actor;
-  const needQty = g.quantity ?? 1;
-  const { qty: haveQty, match } = countActorReagent(actor, g);
-  const haveStr = haveQty > 0 ? `HAS ×${haveQty}` : "MISSING";
-  const matchStr = match ? ` [match=${match}]` : "";
-
-  const info = `${item?.actor?.name ?? "(actor)"} casts ${item?.name ?? "(spell)"} → reagent: ${g.reagentNameCached ?? g.reagentKey ?? g.reagentUUID ?? "(unnamed)"}${g.minCost ? ` (${g.minCost}gp)` : ""} ×${needQty}${g.consumed ? " (consumed)" : ""} [${entry.status ?? "?"}] → ${haveStr}${matchStr}`;
-
-  // Always echo to console for these tests (independent of DEBUG)
-  console.log(`[${MODULE_ID}] t+${D.now()}ms | ${info}`);
-
-  const shouldPopup = game.settings.get(MODULE_ID, "showEchoNotice");
-  if (shouldPopup) {
-    try {
-      const name = g.reagentNameCached ?? g.reagentKey ?? g.reagentUUID ?? "(unnamed)";
-      const consumed = g.consumed ? " (consumed)" : "";
-      ui.notifications?.info?.(`Reagent: ${name} ×${needQty}${consumed} → ${haveStr}`);
-    } catch {}
-  }
-}
-
-/* -------------------------------------------------------------------------------------------------
- *  HIGHER-VALUE REAGENT SUPPORT
- * ------------------------------------------------------------------------------------------------- */
-
-/** Parse gp value from an actor's reagent item name (e.g. "Diamond (500 gp)"). 
- * Used after canonical reagent lookup; not dependent on compendium data. */
-function _extractValueGP(name) {
-  // Match any parentheses containing digits and optional commas before "gp"
-  const m = String(name || "").match(/\(([\d,]+)\s*gp\)/i);
-  if (!m) return 0;
-  // Strip commas and convert to number
-  const num = Number(m[1].replace(/,/g, ""));
-  return isNaN(num) ? 0 : num;
-}
-
-
-/** Try to get the canonical reagent name from compendium or spell map flags. */
-async function getCanonicalReagentName(g) {
-  try {
-    if (g?.reagentUUID) {
-      const doc = await fromUuid(g.reagentUUID);
-      if (doc?.name) return doc.name;
-    }
-
-    if (g?.reagentKey) {
-      const packs = getConfiguredPacks();
-      for (const key of packs) {
-        const pack = game.packs.get(key);
-        if (!pack) continue;
-        const index = await pack.getIndex({ fields: ["name", "flags.reagent-tracker.key"] });
-        const entry = index.find(e =>
-          e?.flags?.["reagent-tracker"]?.key?.toLowerCase() === g.reagentKey.toLowerCase()
-        );
-        if (entry) {
-          const doc = await pack.getDocument(entry._id);
-          if (doc?.name) return doc.name;
-        }
-      }
-    }
-  } catch (err) {
-    console.warn(`[${MODULE_ID}] getCanonicalReagentName failed`, err);
-  }
-  return g?.reagentNameCached ?? null;
-}
-
-/** Find a "better" reagent on the actor by canonical name, with value > reagent.minCost. */
-async function findUpgradedReagent(actor, reagent) {
-  if (!actor || !reagent?.reagentKey) return null;
-
-  // Step 1: find canonical reagent doc by key (not name)
-  const packs = getConfiguredPacks();
-  let canonicalDoc = null;
-  for (const key of packs) {
-    const pack = game.packs.get(key);
-    if (!pack) continue;
-    const index = await pack.getIndex({ fields: ["name", "flags.reagent-tracker.key"] });
-    const entry = index.find(e =>
-      e?.flags?.["reagent-tracker"]?.key?.toLowerCase() === reagent.reagentKey.toLowerCase()
-    );
-    if (entry) {
-      canonicalDoc = await pack.getDocument(entry._id);
-      break;
-    }
-  }
-
-  const baseName = canonicalDoc?.name
-    ? canonicalDoc.name.replace(/\s*\(\d+\s*gp\)/i, "").trim().toLowerCase()
-    : (reagent.reagentNameCached ?? "").toLowerCase().replace(/\s*\(\d+\s*gp\)/i, "").trim();
-
-  // Step 2: scan actor inventory for same reagentKey or baseName
-  const items = actor.items?.contents ?? [];
-  let best = null;
-  for (const it of items) {
-    const keyFlag = it.getFlag(MODULE_ID, "reagentKey");
-    const name = it.name.toLowerCase();
-    if (keyFlag?.toLowerCase() === reagent.reagentKey.toLowerCase() ||
-        name.includes(baseName)) {
-      const value = _extractValueGP(it.name);
-      if (value > (Number(reagent.minCost) || 0)) {
-        if (!best || value > best.valueGP) best = { item: it, valueGP: value };
-      }
-    }
-  }
-  return best;
-}
-
-
-/** Show chat prompt asking if player wishes to consume a more expensive reagent. */
-async function promptUseHigherValue(actor, baseReagent, upgraded) {
-  const speaker = ChatMessage.getSpeaker({ actor });
-  const content = `
-  <div class="reagent-tracker-prompt" style="padding:.5rem;">
-    💎 <b>${actor.name}</b> has a more valuable reagent available:<br>
-    <b>${upgraded.item.name}</b> (${upgraded.valueGP} gp) vs minimum ${baseReagent.minCost ?? 0} gp.<br><br>
-    Use it to cast the spell?<br><br>
-    <button class="rt-accept" style="background:#4a7350;color:white;padding:.25rem .75rem;border:none;border-radius:4px;margin-right:.5rem;">✅ Use</button>
-    <button class="rt-decline" style="background:#a33;color:white;padding:.25rem .75rem;border:none;border-radius:4px;">❌ Decline</button>
-  </div>`;
-
-  // 🧩 Prevent re-entry via Midi-QOL echo
-  if (game.modules.get("midi-qol")?.active) {
-    const stack = (new Error()).stack ?? "";
-    if (/midi-qol/i.test(stack)) {
-      console.debug(`[${MODULE_ID}] Skipping ChatMessage.create (inside Midi-QOL preCreateChatMessage)`);
-      return null;
-    }
-  }
-
-  const msg = await ChatMessage.create({
-    speaker,
-    content,
-    whisper: actor?.getOwners?.().map(u => u.id) ?? [game.user.id],
-    flags: { [MODULE_ID]: { isPrompt: true } }
-  });
-
-  return new Promise(resolve => {
-    Hooks.once(`rtPrompt:${msg.id}`, resolve);
-  });
-}
-
-
-  Hooks.on("renderChatMessage", (message, html) => {
-  // ✅ Skip if not reagent prompt or if already handled by Midi’s echo
-  if (!html.find(".reagent-tracker-prompt").length) return;
-  if (!message.flags?.[MODULE_ID]?.isPrompt) return;
-
-  const root = html[0];
-  if (root?.dataset?.rtBound === "1") return;
-  root.dataset.rtBound = "1";
-
-  const safeDelete = (msg) => {
-    setTimeout(async () => {
-      try { await msg.delete(); }
-      catch (err) {
-        if (!/does not exist/i.test(String(err?.message ?? ""))) {
-          console.warn(`[${MODULE_ID}] safeDelete failed`, err);
-        }
-      }
-    }, 200);
-  };
-
-  html.find(".rt-accept").on("click", ev => {
-    ev.preventDefault();
-    Hooks.callAll(`rtPrompt:${message.id}`, true);
-    safeDelete(message);
-  });
-
-  html.find(".rt-decline").on("click", ev => {
-    ev.preventDefault();
-    Hooks.callAll(`rtPrompt:${message.id}`, false);
-    safeDelete(message);
-  });
-});
-
-
-
-
-
-
-/* -------------------------------------------------------------------------------------------------
- *  CONSUMPTION CORE
- * ------------------------------------------------------------------------------------------------- */
-
-/**
- * Consume up to `needQty` across matching stacks on the actor.
- * Returns { consumed: number, updates: number, deleted: number }
- */
-async function consumeReagent_Auto(actor, reagent, needQty) {
-  if (!actor || !reagent || !needQty || needQty <= 0) return { consumed: 0, updates: 0, deleted: 0 };
-
-  const matches = findReagentItemOnActor_Auto(actor, reagent);
-  if (!matches.length) return { consumed: 0, updates: 0, deleted: 0 };
-
-  // Sort smallest stacks first to keep inventory neat
-  const stacks = matches
-    .map(it => ({ it, q: Number(it?.system?.quantity ?? 1) || 0 }))
-    .filter(s => s.q > 0)
-    .sort((a,b) => a.q - b.q);
-
-  let remaining = needQty;
-  const updates = [];
-  const deletions = [];
-
-  for (const s of stacks) {
-    if (remaining <= 0) break;
-    const take = Math.min(s.q, remaining);
-    const newQty = s.q - take;
-    remaining -= take;
-
-    if (newQty > 0) {
-      updates.push({ _id: s.it.id, "system.quantity": newQty });
-    } else {
-      deletions.push(s.it.id);
-    }
-  }
-
-  if (updates.length) await actor.updateEmbeddedDocuments("Item", updates);
-  if (deletions.length) await actor.deleteEmbeddedDocuments("Item", deletions);
-
-  const consumed = needQty - Math.max(remaining, 0);
-  return { consumed, updates: updates.length, deleted: deletions.length };
-}
-
-// Guard so we don't double-consume if both core + midi fire
-const _castConsumeGuards = new Set(); // keys like `${actorId}:${itemId}:${ctxId}`
-function _makeConsumeKey(item, ctxId) {
-  const a = item?.actor?.id ?? "noactor";
-  const i = item?.id ?? "noitem";
-
-  // Prefer the ctxId we pass from midi workflow (wf.id).
-  // Fall back to a *unique* id (not item.uuid, which is stable across casts).
-  const rnd = (typeof crypto !== "undefined" && crypto.randomUUID)
-    ? crypto.randomUUID()
-    : (typeof randomID === "function" ? randomID() : `${a}:${i}:${Date.now()}:${Math.random()}`);
-
-  const c = (ctxId != null ? ctxId : rnd);
-  return `${a}:${i}:${c}`;
-}
-
-async function maybeConsumeForCast(item, ctxId) {
-  try {
-    if (!game.settings.get(MODULE_ID, "autoConsumeOnCast")) return true;
-
-    const entry = findSpellMapEntryForItem(item);
-    const g = entry?.reagents?.[0];
-    if (!g) return true;
-    if (!g.consumed) return true; // mapping says not consumed
-
-    const actor = item?.actor;
-    const needQty = g.quantity ?? 1;
-
-    // ensure we have something to consume; echo already told us amounts
-    const { qty: haveQty } = countActorReagent(actor, g);
-
-    // --- NEW: check for higher-value alternative (runs when base reagent is missing) ---
-    if (haveQty <= 0 && g.minCost) {
-      const upgraded = await findUpgradedReagent(actor, g);
-      if (upgraded) {
-        const accept = await promptUseHigherValue(actor, g, upgraded);
-        if (accept) {
-          // Consume one of the upgraded item, but retain the base reagentKey
-          const res = await consumeReagent_Auto(
-            actor,
-            { reagentKey: g.reagentKey, reagentNameCached: upgraded.item.name, reagentUUID: g.reagentUUID },
-            1
-          );
-          console.log(
-            `[${MODULE_ID}] ${actor.name} used higher-value reagent ${upgraded.item.name} (${upgraded.valueGP} gp) → consumed ${res.consumed}`
-          );
-        } else {
-          console.log(`[${MODULE_ID}] ${actor.name} declined use of higher-value reagent ${upgraded.item.name}`);
-        }
-        return true; // stop normal flow either way
-      }
-    }
-
-    // If no upgraded reagent found and no normal reagent either → skip quietly
-    if (haveQty <= 0) return true;
-
-
-    const key = _makeConsumeKey(item, ctxId);
-    if (_castConsumeGuards.has(key)) return true;
-    _castConsumeGuards.add(key);
-
-    const res = await consumeReagent_Auto(actor, g, Math.min(needQty, haveQty));
-
-    const who  = actor?.name ?? "(actor)";
-    const sNam = item?.name ?? "(spell)";
-    const rNam = g.reagentNameCached ?? g.reagentKey ?? g.reagentUUID ?? "(reagent)";
-    console.log(
-      `[${MODULE_ID}] t+${D.now()}ms | CONSUME ${who} ${sNam}: ${rNam} → used ${res.consumed} (updates=${res.updates}, deleted=${res.deleted})`
-    );
-
-    return true;
-  } catch (e) {
-    D.warn("maybeConsumeForCast failed", e);
-    return true;
-  }
-}
-
-
-/* -------------------------------------------------------------------------------------------------
- *  HOOKS (echo + consumption; no blocking)
- * ------------------------------------------------------------------------------------------------- */
-function installEchoOnlyHooks() {
-  onHook("dnd5e.preUseItem", (item /*, config*/) => {
-    if (!item || item.type !== "spell") return;
-    echoReagentRequirement(item);
-  });
-
-  // Core DnD5e: consume once per item use - if its a spell prefer midi
-  onHook("dnd5e.useItem", async (item /*, config, options */) => {
-  if (!item || item.type !== "spell") return;
-  // 🔒 If Midi-QOL is active and user prefers Midi, skip the core hook
-  if (game.modules.get("midi-qol")?.active && game.settings.get(MODULE_ID, "preferMidi")) return;
-  await maybeConsumeForCast(item, "dnd5e.useItem");
-});
-
-  const midiActive = !!game.modules.get("midi-qol")?.active;
-  if (midiActive) {
-    const echoMidi = (workflow /*, label */) => {
-      const item = workflow?.item;
-      if (item?.type !== "spell") return true;
-      echoReagentRequirement(item);
-      return true; // never block
-    };
-
-    onHook("midi-qol.preItemUse",          (wf) => echoMidi(wf));
-    onHook("midi-qol.preItemRoll",         (wf) => echoMidi(wf));
-    onHook("midi-qol.preItemRollV2",       (wf) => echoMidi(wf));
-    onHook("midi-qol.prePreambleComplete", (wf) => echoMidi(wf));
-
-    // Consume once the preamble completes (one time per cast path)
-    onHook("midi-qol.postPreambleComplete", async (wf) => {
-      const item = wf?.item;
-      if (item?.type !== "spell") return;
-      const ctxId = wf?.uuid || wf?.id || "midi.postPreamble";
-      await maybeConsumeForCast(item, ctxId);
-    });
-  }
-}
 
 /* -------------------------------------------------------------------------------------------------
  *  BOOT + SETTINGS
