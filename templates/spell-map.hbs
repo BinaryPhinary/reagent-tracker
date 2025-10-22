@@ -88,13 +88,18 @@
   <table class="spell-map-table" style="width:100%; border-collapse:separate; border-spacing:0 .25rem;">
     <thead>
       <tr style="text-align:left;">
-        <th style="width:36%; padding:.25rem .5rem;">Spell</th>
+        <!-- 🧩 New column: Select All for blocking -->
+        <th style="width:2rem; text-align:center;">
+          <input type="checkbox" data-action="toggle-block-all" checked title="Select/Deselect all spell blocking" />
+        </th>
+        <th style="width:34%; padding:.25rem .5rem;">Spell</th>
         <th style="width:18%; padding:.25rem .5rem;">Pack</th>
         <th style="width:12%; padding:.25rem .5rem;">Status</th>
         <th style="width:24%; padding:.25rem .5rem;">Reagent (from Compendium)</th>
         <th style="width:10%; padding:.25rem .5rem; text-align:center;">Actions</th>
       </tr>
     </thead>
+
     <tbody>
       {{#each rows}}
       <tr
@@ -104,6 +109,14 @@
         data-costly="{{this.hasNativeCostOrConsumed}}"
         style="background:rgba(0,0,0,0.06);"
       >
+        <!-- 🧩 Per-spell blocking toggle -->
+        <td style="text-align:center;">
+          <input type="checkbox"
+                 data-action="toggle-block"
+                 data-index="{{@index}}"
+                 {{#ifEquals this.blockIfMissing true}}checked{{/ifEquals}} />
+        </td>
+
         <td style="padding:.5rem .5rem;">
           <div class="spell-name" style="font-weight:600;">{{this.spellNameCached}}</div>
           <div class="muted uuid" style="font-size:.85em; word-break:break-all;">{{this.spellUUID}}</div>
