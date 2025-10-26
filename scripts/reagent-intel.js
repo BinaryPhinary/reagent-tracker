@@ -71,29 +71,29 @@ const reagentIntel = {
     const spellItems = actor.items.filter(i => i.type === "spell");
     return spellItems.length > 0;
   },
+  
+/* -------------------------------------------------------------------------------------------------
+ *  buildActorReagentState (v31e-async)
+ *  - Async: allows compendium fallback using await
+ * ------------------------------------------------------------------------------------------------- */
+async buildActorReagentState(actor) {
+  const TAG = `[${MODULE_ID}][buildActorReagentState:v31e-async]`;
 
-  // ------------------------------------------------------------
-  // Build state for a single actor — Spell Map is the only source of truth
-  // ------------------------------------------------------------
-  buildActorReagentState(actor) {
-  // --- Safety: only process valid player-controlled characters ---
+  // --- Safety guards ------------------------------------------------------
   if (!(actor instanceof Actor)) {
-    console.log(`[${MODULE_ID}] Skipped non-Actor input.`);
+    console.log(`${TAG} Skipped non-Actor input.`);
     return null;
   }
   if (actor.type !== "character") {
-    console.log(`[${MODULE_ID}] Skipped ${actor.name} (type=${actor.type}).`);
+    console.log(`${TAG} Skipped ${actor.name} (type=${actor.type}).`);
     return null;
   }
   if (!actor.hasPlayerOwner && !actor.isOwner) {
-    console.log(`[${MODULE_ID}] Skipped ${actor.name} (no player/GM ownership).`);
+    console.log(`${TAG} Skipped ${actor.name} (no player/GM ownership).`);
     return null;
   }
 
-  console.log(
-    `[${MODULE_ID}] buildActorReagentState → processing actor '${actor.name}' (id=${actor.id}).`
-  );
-
+  console.log(`${TAG} Processing actor '${actor.name}' (id=${actor.id}).`);
 
   const spellMap = reagentTracker?.getSpellMap?.() ?? [];
   const out = {
@@ -104,52 +104,103 @@ const reagentIntel = {
     summary: { hasMissing: false, hasUpgrades: false, mappedCount: 0, totalSpells: 0 }
   };
 
-  // --- Actor must have at least one spell to continue ---
   const spellItems = actor.items.filter(i => i.type === "spell");
   if (spellItems.length === 0) return null;
   out.summary.totalSpells = spellItems.length;
 
-  // --- Build reagent index from inventory ---
+  // --- Build reagent index from inventory ---------------------------------
   const invKeys = new Map();
   for (const it of actor.items) {
-    const key = it.getFlag(MODULE_ID, "reagentKey");
-    const qty = Number(it.system?.quantity ?? 0);
-    if (key && qty > 0) invKeys.set(key, (invKeys.get(key) ?? 0) + qty);
+    const flags = it.flags?.[MODULE_ID] ?? it.flags?.["reagent-tracker"] ?? {};
+    const reagentKey = flags.reagentKey || null;
+
+    // read from whichever field actually carries quantity
+    const qty = Number(
+      it.system?.quantity ??
+      it.system?.uses?.value ??
+      0
+    );
+
+    if (reagentKey && qty > 0) {
+      const keyNorm = reagentKey.toLowerCase().replace(/\s+/g, "_");
+      invKeys.set(keyNorm, (invKeys.get(keyNorm) ?? 0) + qty);
+    }
   }
 
-  // --- Build lookup of spell mappings (by UUID first, then fallback by name)
+
+  // --- Build quick maps for faster SpellMap lookups -----------------------
   const mappedByUUID = new Map(spellMap.map(e => [e.spellUUID, e]));
   const mappedByName = new Map(spellMap.map(e => [e.spellNameCached?.toLowerCase(), e]));
 
-  // --- Iterate through all actor spells that are explicitly mapped
+  // --- Process each spell -------------------------------------------------
   for (const spell of spellItems) {
-    const mapped = mappedByUUID.get(spell.uuid) || mappedByName.get(spell.name.toLowerCase());
+    const mapped =
+      mappedByUUID.get(spell.uuid) ||
+      mappedByName.get(spell.name.toLowerCase());
     if (!mapped) continue;
 
     const reagents = mapped.reagents ?? [];
     if (reagents.length === 0) continue;
 
     const need = reagents[0];
-    const needKey = need?.reagentKey;
+    const needKey = need?.reagentKey?.toLowerCase().replace(/\s+/g, "_");
     if (!needKey) continue;
 
     const needCost = Number(need?.minCost ?? 0) || 0;
+
+    // 🧩 Determine 'consumed' flag — SpellMap first, Compendium fallback ----
+    let consumed = null;
+    if (typeof need?.consumed === "boolean") {
+      consumed = need.consumed;
+      console.log(`${TAG} SpellMap flag → ${spell.name} reagent ${need.reagentKey} consumed=${consumed}`);
+    } else {
+      // Fallback: read from compendium if SpellMap entry missing the flag
+      try {
+        const pack = game.packs.get("world.reagents");
+        if (pack) {
+          const index = await pack.getIndex({ fields: ["name", "flags"] });
+          const hit = index.find(e =>
+            (e.flags?.["reagent-tracker"]?.reagentKey ?? "")
+              .toLowerCase() === needKey
+          );
+          if (hit) {
+            consumed = hit.flags?.["reagent-tracker"]?.consumed ?? false;
+            console.log(`${TAG} Compendium fallback → ${spell.name} reagent ${need.reagentKey} consumed=${consumed}`);
+          }
+        }
+      } catch (err) {
+        console.warn(`${TAG} Compendium lookup failed for ${need.reagentKey}`, err);
+      }
+    }
+
+    // Default if still null
+    if (consumed === null) consumed = false;
+
     const entry = {
       mapped: true,
       reagentKey: needKey,
+      reagentType: need?.reagentType ?? null,
       spellName: spell.name,
       spellUUID: spell.uuid,
       hasExact: false,
       hasUpgrade: false,
       missing: false,
-      upgrade: null
+      upgrade: null,
+
+    // 🟩 Final authoritative metadata
+    consumed,
+    isLootable: need?.isLootable ?? true,
+    minCost: needCost,
+    blockIfMissing: mapped.blockIfMissing ?? true
     };
 
-    // --- Check for exact reagent
+    // --- Check for exact reagent -----------------------------------------
     const qty = invKeys.get(needKey) ?? 0;
     entry.hasExact = qty > 0;
+    entry.quantity = qty; // ✅ reflects current actor inventory
 
-    // --- Check for higher-value reagent upgrade
+
+    // --- Check for higher-value upgrade ----------------------------------
     if (!entry.hasExact && typeof findUpgradedReagentOnActor === "function") {
       const up = findUpgradedReagentOnActor(actor, need);
       if (up?.item) {
@@ -157,67 +208,97 @@ const reagentIntel = {
         entry.upgrade = {
           itemId: up.item.id,
           itemName: up.item.name,
+          reagentKey: up.item.flags?.[MODULE_ID]?.reagentKey ?? null,
+          reagentType: up.item.flags?.[MODULE_ID]?.reagentType ?? null,
           valueGP: up.valueGP ?? null
         };
       }
     }
 
+    // --- Compute missing flag after evaluating upgrade -------------------
     entry.missing = !entry.hasExact && !entry.hasUpgrade;
+
     out.spells[spell.id] = entry;
   }
 
-  // --- Skip actors with no reagent-mapped spells
+  // --- Skip if no reagent-mapped spells ----------------------------------
   if (Object.keys(out.spells).length === 0) return null;
 
-  // --- Compute summaries
+  // --- Compute summaries -------------------------------------------------
   const all = Object.values(out.spells);
   out.summary = {
     hasMissing: all.some(s => s.missing),
     hasUpgrades: all.some(s => s.hasUpgrade),
     mappedCount: all.length,
-    totalSpells: out.summary.totalSpells
+    totalSpells: spellItems.length
   };
 
+  // --- Cache + Log -------------------------------------------------------
   this.cache.set(actor.id, out);
-  console.log(`[${MODULE_ID}] ${actor.name} → tracked ${all.length} reagent-linked spell(s).`);
+  console.log(`${TAG} ${actor.name} → tracked ${all.length} reagent-linked spell(s).`);
   return out;
 },
 
 
+// ------------------------------------------------------------
+// Rebuild for all relevant casters (player, GM, or scene actors)
+// ------------------------------------------------------------
+rebuildAllCasters() {
+  const TAG = `[${MODULE_ID}][rebuildAllCasters:v31e+]`;
+  console.log(`${TAG} rebuilding reagent intel cache...`);
 
-  // ------------------------------------------------------------
-  // Rebuild for all player casters in world
-  // ------------------------------------------------------------
-  rebuildAllCasters() {
-    this.cache.clear();
-    const actors = game.actors.contents ?? [];
-    for (const a of actors) {
-      if (a.type !== "character") continue;
-      if (!a.hasPlayerOwner) continue;
-      this.buildActorReagentState(a)     
-    }
-    console.log(`[${MODULE_ID}] reagentIntel → cache built for ${this.cache.size} player caster(s).`);
-  },
+  this.cache.clear();
 
-  // ------------------------------------------------------------
-  // Lazy access — rebuild if stale or missing
-  // ------------------------------------------------------------
-  ensureReagentState(actor) {
-    if (actor?.type === "npc") return null;
-    const cur = this.cache.get(actor.id);
-    if (!cur) return this.buildActorReagentState(actor);
-    const age = Date.now() - cur.ts;
-    if (age > 60_000) return this.buildActorReagentState(actor); // 1 min stale
-    return cur;
-  },
+  // Collect scene actors (for GM safety + visibility)
+  const sceneActors = new Set(
+    (canvas.scene?.tokens ?? [])
+      .map(t => t.actor)
+      .filter(a => !!a)
+      .map(a => a.id)
+  );
 
-  // ------------------------------------------------------------
-  // Invalidate (e.g., inventory/spell update)
-  // ------------------------------------------------------------
-  invalidateReagentState(actor) {
-    if (actor?.type === "npc") return;
-    this.cache.delete(actor.id);
+  // Collect all character-type actors that are relevant
+  const actors = game.actors.contents.filter(a =>
+    a.type === "character" &&
+    (a.hasPlayerOwner || a.isOwner || game.user.isGM || sceneActors.has(a.id))
+  );
+
+  if (!actors.length) {
+    console.warn(`${TAG} no eligible actors found (none match ownership or scene criteria).`);
+    return;
   }
+
+  // Async rebuild for each
+  for (const actor of actors) {
+    try {
+      this.buildActorReagentState(actor);
+    } catch (err) {
+      console.warn(`${TAG} failed to rebuild ${actor.name}`, err);
+    }
+  }
+
+  console.log(`${TAG} cache rebuild triggered for ${actors.length} actor(s).`);
+},
+
+// ------------------------------------------------------------
+// Lazy access — rebuild if stale or missing
+// ------------------------------------------------------------
+ensureReagentState(actor) {
+  if (actor?.type === "npc") return null;
+  const cur = this.cache.get(actor.id);
+  if (!cur) return this.buildActorReagentState(actor);
+  const age = Date.now() - cur.ts;
+  if (age > 60_000) return this.buildActorReagentState(actor); // 1 min stale
+  return cur;
+},
+
+// ------------------------------------------------------------
+// Invalidate (e.g., inventory/spell update)
+// ------------------------------------------------------------
+invalidateReagentState(actor) {
+  if (actor?.type === "npc") return;
+  this.cache.delete(actor.id);
+}
 };
 
 // ============================================================================
@@ -267,35 +348,51 @@ Hooks.on("updateScene", (scene, diff) => {
 });
 
 
-
 // ============================================================================
 // 🧪 Developer Diagnostic Helpers
 // ============================================================================
 reagentIntel.debugTable = function () {
   const rows = [];
+
   for (const state of this.cache.values()) {
-    if (!state.isCaster) continue;
+    // --- Safety: ignore malformed or NPC entries ---
+    if (!state?.name || !state?.summary) continue;
+
+    // --- Optional field retained for GM-only diagnostic context ---
+    const isCaster = state.isCaster ?? (Object.keys(state.spells ?? {}).length > 0);
+    if (!isCaster) continue;
+
+    // --- Build display row ---
     rows.push({
       Actor: state.name,
       Missing: state.summary.hasMissing ? "❌" : "✅",
       Upgrades: state.summary.hasUpgrades ? "⬆️" : "",
-      Mapped: state.summary.mappedCount,
-      TotalSpells: state.summary.totalSpells
+      Mapped: state.summary.mappedCount ?? 0,
+      TotalSpells: state.summary.totalSpells ?? 0,
+      LastUpdated: new Date(state.ts).toLocaleTimeString(),
     });
   }
-  console.table(rows.sort((a, b) => a.Actor.localeCompare(b.Actor)));
-  console.log(`[${MODULE_ID}] reagentIntel → ${rows.length} player caster(s) in cache.`);
+
+  // --- Sort alphabetically for predictable debug output ---
+  rows.sort((a, b) => a.Actor.localeCompare(b.Actor));
+
+  console.table(rows);
+  console.log(
+    `[${MODULE_ID}] reagentIntel → ${rows.length} tracked player caster(s) in cache.`
+  );
 };
 
 
 // ------------------------------------------------------------
-//  Developer helper: list all *active* casters (on map or in party)
+// 🧪 Developer Helper — List all *active* casters (on map or in party)
 // ------------------------------------------------------------
-reagentIntel.listCasters = function () {
-  // Always rebuild to ensure freshness
-  this.rebuildAllCasters();
+reagentIntel.listCasters = function ({ forceRebuild = true } = {}) {
+  // 1️⃣ Optionally rebuild to ensure cache freshness
+  if (forceRebuild && typeof this.rebuildAllCasters === "function") {
+    this.rebuildAllCasters();
+  }
 
-  // 1️⃣ Gather actors that are either on the current scene or owned by a player
+  // 2️⃣ Gather actors that are on the current scene or owned by players
   const sceneActors = new Set(
     (canvas.scene?.tokens ?? [])
       .map(t => t.actor)
@@ -312,10 +409,18 @@ reagentIntel.listCasters = function () {
   // Merge both sets → “active” actor IDs
   const activeIds = new Set([...sceneActors, ...ownedActors]);
 
-  // 2️⃣ Build rows for actors in cache that match this criteria
+  // 3️⃣ Build output rows for actors in cache matching criteria
   const rows = [];
+
   for (const [id, state] of this.cache.entries()) {
-    if (!state.isCaster) continue;
+    if (!state) continue;
+
+    // Defensive check for new schema fields
+    const spells = state.spells ?? {};
+    const summary = state.summary ?? {};
+    const isCaster = (state.isCaster ?? (Object.keys(spells).length > 0)) || false;
+
+    if (!isCaster) continue;
     if (!activeIds.has(id)) continue;
 
     const actor = game.actors.get(id);
@@ -323,23 +428,32 @@ reagentIntel.listCasters = function () {
 
     rows.push({
       Actor: actor.name,
-      SpellsTracked: state.summary.mappedCount,
-      Missing: state.summary.hasMissing ? "❌" : "",
-      Upgrades: state.summary.hasUpgrades ? "⬆️" : "",
-      TotalSpells: state.summary.totalSpells ?? Object.keys(state.spells).length
+      Mapped: summary.mappedCount ?? Object.keys(spells).length ?? 0,
+      Missing: summary.hasMissing ? "❌" : "✅",
+      Upgrades: summary.hasUpgrades ? "⬆️" : "",
+      TotalSpells: summary.totalSpells ?? Object.keys(spells).length ?? 0,
+      LastUpdated: new Date(state.ts).toLocaleTimeString(),
     });
   }
 
+  // 4️⃣ Sort alphabetically for predictable debug output
+  rows.sort((a, b) => a.Actor.localeCompare(b.Actor));
+
+  // 5️⃣ Display in console
   console.table(rows);
-  console.log(`[${MODULE_ID}] Found ${rows.length} active caster(s) (in party or on scene).`);
+  console.log(
+    `[${MODULE_ID}] reagentIntel → ${rows.length} active caster(s) (party or on scene).`
+  );
+
   return rows;
 };
 
 
 // ------------------------------------------------------------
-//  Developer helper: inspect one actor's reagent intel
+// 🧪 Developer Helper — Inspect one actor's reagent intel
 // ------------------------------------------------------------
 reagentIntel.inspectActor = function (nameOrId) {
+  // --- 1️⃣ Resolve actor by ID or name ---
   const actor =
     game.actors.get(nameOrId) ??
     game.actors.getName(nameOrId) ??
@@ -350,32 +464,57 @@ reagentIntel.inspectActor = function (nameOrId) {
     return;
   }
 
+  // --- 2️⃣ Ensure reagent state exists ---
   const state = this.ensureReagentState(actor);
   if (!state || !state.spells) {
     console.warn(`[${MODULE_ID}] reagentIntel.inspectActor: no reagent intel for ${actor.name}`);
     return;
   }
 
-  const rows = Object.entries(state.spells).map(([id, s]) => ({
-    Spell: s.name,
-    ReagentKey: s.reagentKey || "(none)",
-    HasExact: s.hasExact ? "✅" : "",
-    HasUpgrade: s.hasUpgrade ? "⬆️" : "",
-    Missing: s.missing ? "❌" : ""
-  }));
+  const spells = state.spells ?? {};
+  const summary = state.summary ?? {};
+  const rows = [];
 
+  // --- 3️⃣ Build rows from updated schema ---
+  for (const [id, s] of Object.entries(spells)) {
+    const reagentKey = s.reagentKey ?? "(none)";
+    const reagentType = s.reagentType ?? "";
+    const upgrade = s.upgrade ?? {};
+
+    rows.push({
+      Spell: s.spellName ?? "(unnamed spell)",
+      ReagentKey: reagentKey,
+      Type: reagentType,
+      HasExact: s.hasExact ? "✅" : "",
+      HasUpgrade: s.hasUpgrade ? "⬆️" : "",
+      UpgradeItem: upgrade.itemName ?? "",
+      UpgradeValueGP: upgrade.valueGP ?? "",
+      Missing: s.missing ? "❌" : "",
+    });
+  }
+
+  // --- 4️⃣ Sort alphabetically by spell name for clarity ---
+  rows.sort((a, b) => a.Spell.localeCompare(b.Spell));
+
+  // --- 5️⃣ Display nicely formatted diagnostic output ---
+  console.groupCollapsed(
+    `%c[${MODULE_ID}] ${actor.name} → ${rows.length} reagent-tracked spell(s)`,
+    "color: #00b5ad; font-weight: bold;"
+  );
   console.table(rows);
+  console.groupEnd();
+
   console.log(
-    `[${MODULE_ID}] ${actor.name} → ${rows.length} spells | Missing=${state.summary.hasMissing ? "✅" : "❌"}, Upgrades=${state.summary.hasUpgrades ? "✅" : "❌"}`
+    `[${MODULE_ID}] Summary for ${actor.name}: Missing=${summary.hasMissing ? "❌" : "✅"}, Upgrades=${summary.hasUpgrades ? "⬆️" : "✅"}, Total=${summary.mappedCount ?? rows.length}`
   );
 
   return rows;
 };
-
 // ------------------------------------------------------------
-//  Developer helper: compare reagent keys (Inventory vs Compendium vs SpellMap)
+// 🧪 Developer Helper — Compare reagent keys (Inventory vs Compendium vs SpellMap)
 // ------------------------------------------------------------
 reagentIntel.compareReagentKeys = async function (nameOrId) {
+  // --- 1️⃣ Resolve actor by ID or name ---
   const actor =
     game.actors.get(nameOrId) ??
     game.actors.getName(nameOrId) ??
@@ -386,55 +525,76 @@ reagentIntel.compareReagentKeys = async function (nameOrId) {
     return;
   }
 
+  // --- 2️⃣ Load compendium reagents using new flag schema ---
   const pack = game.packs.get("world.reagents");
-  let compendiumKeys = new Map();
+  const compendiumKeys = new Map();
 
   if (pack) {
     try {
       const docs = await pack.getDocuments();
       for (const d of docs) {
-        const key = d.getFlag(MODULE_ID, "key");
-        if (key) compendiumKeys.set(key, d.name);
+        const flags = d.flags?.[MODULE_ID] ?? d.flags?.["reagent-tracker"] ?? {};
+        const reagentKey = flags.reagentKey?.toLowerCase().replace(/\s+/g, "_");
+        if (reagentKey) compendiumKeys.set(reagentKey, d.name);
       }
     } catch (e) {
       console.warn(`[${MODULE_ID}] reagentIntel.compareReagentKeys: failed to read world.reagents`, e);
     }
   }
 
+  // --- 3️⃣ Load spell map reagent keys (already structured JSON) ---
   const spellMap = game.settings.get(MODULE_ID, "spellReagentMap") ?? [];
   const spellKeys = new Map();
+
   for (const row of spellMap) {
-    if (row.reagents?.length) {
-      for (const r of row.reagents) {
-        if (r.reagentKey) spellKeys.set(r.reagentKey, row.spellNameCached);
-      }
+    if (!row?.reagents?.length) continue;
+    for (const r of row.reagents) {
+      const rKey = r?.reagentKey?.toLowerCase().replace(/\s+/g, "_");
+      if (rKey) spellKeys.set(rKey, row.spellNameCached);
     }
   }
 
+  // --- 4️⃣ Compare actor inventory reagents ---
   const rows = [];
 
   for (const it of actor.items.contents) {
     if (!["loot", "consumable"].includes(it.type)) continue;
-    const key = it.getFlag(MODULE_ID, "reagentKey");
+
+    const flags = it.flags?.[MODULE_ID] ?? it.flags?.["reagent-tracker"] ?? {};
+    const reagentKey = flags.reagentKey?.toLowerCase().replace(/\s+/g, "_") ?? null;
+    const reagentType = flags.reagentType ?? it.type ?? "(unknown)";
     const src = it._stats?.compendiumSource ?? "";
-    const inComp = key && compendiumKeys.has(key);
-    const inMap = key && spellKeys.has(key);
+    const inCompendium = reagentKey && compendiumKeys.has(reagentKey);
+    const inSpellMap = reagentKey && spellKeys.has(reagentKey);
 
     rows.push({
       Item: it.name,
-      Key: key ?? "(none)",
-      InCompendium: inComp ? "✅" : "❌",
-      InSpellMap: inMap ? "✅" : "❌",
-      Source: src || "(manual/world)"
+      ReagentKey: reagentKey ?? "(none)",
+      Type: reagentType,
+      InCompendium: inCompendium ? "✅" : "❌",
+      InSpellMap: inSpellMap ? "✅" : "❌",
+      CompendiumName: inCompendium ? compendiumKeys.get(reagentKey) : "",
+      LinkedSpell: inSpellMap ? spellKeys.get(reagentKey) : "",
+      Source: src || "(manual/world)",
     });
   }
 
-  console.table(rows);
-  console.log(
-    `[${MODULE_ID}] ${actor.name} → ${rows.length} inventory items compared against compendium + spell map.`
+  // --- 5️⃣ Sort and display diagnostics ---
+  rows.sort((a, b) => a.Item.localeCompare(b.Item));
+  console.groupCollapsed(
+    `%c[${MODULE_ID}] ${actor.name} → ${rows.length} reagent items compared`,
+    "color: #ff9800; font-weight: bold;"
   );
+  console.table(rows);
+  console.groupEnd();
+
+  console.log(
+    `[${MODULE_ID}] ${actor.name} → ${rows.length} inventory items checked against compendium + spell map.`
+  );
+
   return rows;
 };
+
 
 // ============================================================================
 // 🔌 Expose globally once ready
@@ -446,42 +606,106 @@ Hooks.once("ready", () => {
   console.log(`[${MODULE_ID}] reagentIntel subsystem initialized (player-only, scene-aware).`);
 });
 
+
 // ============================================================================
-// 🔄 Refresh triggers (unchanged)
+// 🔄 Refresh triggers (v13-compatible) — guarded to skip mid-cast rebuilds
 // ============================================================================
+
 Hooks.on("updateActor", (actor, diff) => {
   if (actor?.type === "npc") return;
+
+  // 🛡️ Skip intel rebuilds while this actor is mid-cast
+  if (globalThis.reagentTracker?._castingActors?.has(actor.id)) {
+    console.log(`[${MODULE_ID}] [updateActor] Skip rebuild for '${actor.name}' (casting in progress)`);
+    return;
+  }
+
   if (diff?.system?.spells || diff?.items) {
     reagentIntel.invalidateReagentState(actor);
     reagentIntel.buildActorReagentState(actor);
   }
 });
 
-Hooks.on("updateItem", (item) => {
-  const actor = item.parent;
+Hooks.on("createItem", async (item) => {
+  const actor = item?.parent;
   if (!(actor instanceof Actor) || actor.type === "npc") return;
+  if (globalThis.reagentTracker?._castingActors?.has(actor.id)) return;
+
+  try {
+    const backfill = globalThis.reagentTracker?._rtBackfillReagentKeyFromCompSource;
+    if (typeof backfill === "function") {
+      const res = await backfill(item);
+      if (res) console.log(`[${MODULE_ID}] [createItem] Backfilled reagentKey for '${item.name}'`);
+    } else {
+      console.warn(`[${MODULE_ID}] [createItem] Backfill function not yet available`);
+    }
+  } catch (err) {
+    console.warn(`[${MODULE_ID}] [createItem] Backfill error for '${item.name}':`, err);
+  }
+
   reagentIntel.invalidateReagentState(actor);
   reagentIntel.buildActorReagentState(actor);
 });
 
-Hooks.on("createItem", (item) => {
-  const actor = item.parent;
+
+// 🟡 Item Updated (quantity / uses / flag changes)
+Hooks.on("updateItem", (item, diff) => {
+  const actor = item?.parent;
   if (!(actor instanceof Actor) || actor.type === "npc") return;
-  reagentIntel.invalidateReagentState(actor);
-  reagentIntel.buildActorReagentState(actor);
+  if (globalThis.reagentTracker?._castingActors?.has(actor.id)) return;
+
+  const hasQtyChange =
+    foundry.utils.hasProperty(diff, "system.quantity") ||
+    foundry.utils.hasProperty(diff, "system.uses.value");
+
+  if (!hasQtyChange) return;
+
+  setTimeout(async () => {
+    console.log(`[${MODULE_ID}] [updateItem] '${item.name}' qty/uses changed → rebuilding cache for ${actor.name}`);
+    reagentIntel.invalidateReagentState(actor);
+    await reagentIntel.buildActorReagentState(actor);
+  }, 50);
 });
 
+// 🔴 Item Deleted
 Hooks.on("deleteItem", (item) => {
-  const actor = item.parent;
+  const actor = item?.parent;
   if (!(actor instanceof Actor) || actor.type === "npc") return;
+  if (globalThis.reagentTracker?._castingActors?.has(actor.id)) return;
+
+  console.log(`[${MODULE_ID}] [deleteItem] '${item.name}' removed → rebuilding cache for ${actor.name}`);
   reagentIntel.invalidateReagentState(actor);
   reagentIntel.buildActorReagentState(actor);
 });
 
-Hooks.on(`${MODULE_ID}.spellMapUpdated`, () => {
-  console.log(`[${MODULE_ID}] Spell map updated — rebuilding reagent intel cache.`);
-  reagentTracker.reagentIntel.rebuildAllCasters();
+
+// -- v31e this should update the inventories of actors if the spellmap data changes
+Hooks.on("reagent-tracker.spellMapUpdated", async () => {
+  const TAG = `[${MODULE_ID}][spellMapUpdatedHook:v31e]`;
+  console.log(`${TAG} triggered → rebuilding reagent intel for all casters.`);
+  try {
+    await reagentTracker.reagentIntel.rebuildAllCasters();
+    console.log(`${TAG} cache rebuilt successfully (${reagentTracker.reagentIntel.cache.size} actor(s)).`);
+  } catch (err) {
+    console.error(`${TAG} failed to rebuild cache:`, err);
+  }
 });
+// Do a refresh of the cache on a long rest v31j
+Hooks.on("dnd5e.restCompleted", async (actor, data, options) => {
+  if (!(actor instanceof Actor) || actor.type === "npc") return;
+
+  // 🛡️ Avoid conflicts if mid-cast
+  if (globalThis.reagentTracker?._castingActors?.has(actor.id)) {
+    console.log(`[${MODULE_ID}] [restCompleted] Skip rebuild for '${actor.name}' (casting in progress)`);
+    return;
+  }
+
+  console.log(`[${MODULE_ID}] [restCompleted] Rebuilding reagent cache for '${actor.name}' after rest`);
+  reagentIntel.invalidateReagentState(actor);
+  await reagentIntel.buildActorReagentState(actor);
+});
+
+
 
 
 Hooks.once("midi-qol.preItemRollV2", async (wrapper) => {
@@ -498,13 +722,5 @@ Hooks.once("midi-qol.preItemRollV2", async (wrapper) => {
   console.log("UUID:", wf.item.uuid);
   console.log("CompSource:", wf.item._stats?.compendiumSource);
   console.log("Flags:", wf.item.flags);
-});
-
-// --- NEW: refresh when the Spell Map itself changes
-Hooks.on("updateSetting", (setting, data) => {
-  if (setting.key === `${MODULE_ID}.spellReagentMap`) {
-    console.log(`[${MODULE_ID}] Spell Map changed → rebuilding reagent intel cache`);
-    reagentIntel.rebuildAllCasters();
-  }
 });
 
