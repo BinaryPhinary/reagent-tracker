@@ -1,0 +1,949 @@
+[
+  {
+    "name": "Diamond (50 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 50,
+      "priceDenomination": "gp",
+      "priceInGP": 50,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "diamond_50_gp_",
+        "reagentType": "gemstone",
+        "isLootable": true,
+        "aliases": ["chromatic orb diamond"],
+        "sources": ["Chromatic Orb (not consumed)"],
+        "consume": { "mode": "uses", "perCast": 0 }
+      }
+    }
+  },
+  {
+    "name": "Diamond (300 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 300,
+      "priceDenomination": "gp",
+      "priceInGP": 300,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "diamond_300_gp_",
+        "reagentType": "gemstone",
+        "isLootable": true,
+        "aliases": ["revivify diamond"],
+        "sources": ["Revivify (consumed)"],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Diamond (500 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 500,
+      "priceDenomination": "gp",
+      "priceInGP": 500,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "diamond_500_gp_",
+        "reagentType": "gemstone",
+        "isLootable": true,
+        "aliases": ["raise dead diamond"],
+        "sources": ["Raise Dead (consumed)"],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Diamond (1,000 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 1000,
+      "priceDenomination": "gp",
+      "priceInGP": 1000,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "diamond_1_000_gp_",
+        "reagentType": "gemstone",
+        "isLootable": true,
+        "aliases": ["resurrection diamond"],
+        "sources": ["Resurrection (consumed)"],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Diamond (5,000 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 5000,
+      "priceDenomination": "gp",
+      "priceInGP": 5000,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "diamond_5_000_gp_",
+        "reagentType": "gemstone",
+        "isLootable": true,
+        "aliases": [],
+        "sources": [],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Diamond (25,000 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 25000,
+      "priceDenomination": "gp",
+      "priceInGP": 25000,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "diamond_25_000_gp_",
+        "reagentType": "gemstone",
+        "isLootable": true,
+        "aliases": ["true resurrection diamonds"],
+        "sources": ["True Resurrection (consumed)"],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Pearl (100 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 100,
+      "priceDenomination": "gp",
+      "priceInGP": 100,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "pearl_100_gp_",
+        "reagentType": "gemstone",
+        "isLootable": true,
+        "aliases": ["identify pearl"],
+        "sources": ["Identify (not consumed)"],
+        "consume": { "mode": "uses", "perCast": 0 }
+      }
+    }
+  },
+  {
+    "name": "Ruby (1,000 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 1000,
+      "priceDenomination": "gp",
+      "priceInGP": 1000,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "ruby_1_000_gp_",
+        "reagentType": "gemstone",
+        "isLootable": true,
+        "aliases": ["infernal calling ruby"],
+        "sources": ["Infernal Calling (consumed)"],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Sapphire (1,000 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 1000,
+      "priceDenomination": "gp",
+      "priceInGP": 1000,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "sapphire_1_000_gp_",
+        "reagentType": "gemstone",
+        "isLootable": true,
+        "aliases": [],
+        "sources": [],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Jewel (1,000 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 1000,
+      "priceDenomination": "gp",
+      "priceInGP": 1000,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "jewel_1_000_gp_",
+        "reagentType": "gemstone",
+        "isLootable": true,
+        "aliases": ["planar binding jewel"],
+        "sources": ["Planar Binding (consumed)"],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Diamond Dust (100 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 100,
+      "priceDenomination": "gp",
+      "priceInGP": 100,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "diamond_dust_100_gp_",
+        "reagentType": "powder",
+        "isLootable": true,
+        "aliases": ["stoneskin diamond dust", "greater restoration diamond dust"],
+        "sources": ["Stoneskin (consumed)", "Greater Restoration (consumed)"],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Ruby Dust (50 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 50,
+      "priceDenomination": "gp",
+      "priceInGP": 50,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "ruby_dust_50_gp_",
+        "reagentType": "powder",
+        "isLootable": true,
+        "aliases": ["continual flame ruby dust"],
+        "sources": ["Continual Flame (consumed)"],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Ruby Dust (1,000 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 1000,
+      "priceDenomination": "gp",
+      "priceInGP": 1000,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "ruby_dust_1_000_gp_",
+        "reagentType": "powder",
+        "isLootable": true,
+        "aliases": ["forbiddance ruby dust"],
+        "sources": ["Forbiddance (consumed)"],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Ruby Dust (1,500 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 1500,
+      "priceDenomination": "gp",
+      "priceInGP": 1500,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "ruby_dust_1_500_gp_",
+        "reagentType": "powder",
+        "isLootable": true,
+        "aliases": ["simulacrum ruby dust"],
+        "sources": ["Simulacrum (consumed)"],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Ruby – Powdered (800 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 800,
+      "priceDenomination": "gp",
+      "priceInGP": 800,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "powdered_ruby_800_gp_",
+        "reagentType": "powder",
+        "isLootable": true,
+        "aliases": [],
+        "sources": [],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Bone Dust (15 sp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 15,
+      "priceDenomination": "sp",
+      "priceInGP": 1,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "bone_dust_15_sp_",
+        "reagentType": "powder",
+        "isLootable": true,
+        "aliases": [],
+        "sources": [],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Pinch of Iron Powder (5 sp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 5,
+      "priceDenomination": "sp",
+      "priceInGP": 0,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "pinch_of_iron_powder_5_sp_",
+        "reagentType": "powder",
+        "isLootable": true,
+        "aliases": ["iron filings", "enlarge reduce iron"],
+        "sources": ["Enlarge/Reduce (not consumed)"],
+        "consume": { "mode": "uses", "perCast": 0 }
+      }
+    }
+  },
+  {
+    "name": "Fine Sand (10 cp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 10,
+      "priceDenomination": "cp",
+      "priceInGP": 0,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "fine_sand_10_cp_",
+        "reagentType": "powder",
+        "isLootable": true,
+        "aliases": ["sleep sand"],
+        "sources": ["Sleep (not consumed)"],
+        "consume": { "mode": "uses", "perCast": 0 }
+      }
+    }
+  }
+  ,
+  {
+    "name": "Incense (10 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 10,
+      "priceDenomination": "gp",
+      "priceInGP": 10,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "incense_10_gp_",
+        "reagentType": "incense",
+        "isLootable": true,
+        "aliases": [],
+        "sources": [],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Incense (25 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 25,
+      "priceDenomination": "gp",
+      "priceInGP": 25,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "incense_25_gp_",
+        "reagentType": "incense",
+        "isLootable": true,
+        "aliases": [],
+        "sources": [],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Rare Incense (250 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 250,
+      "priceDenomination": "gp",
+      "priceInGP": 250,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "rare_incense_250_gp_",
+        "reagentType": "incense",
+        "isLootable": true,
+        "aliases": ["forbiddance ruby incense"],
+        "sources": ["Forbiddance (consumed)"],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Charcoal (3 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 3,
+      "priceDenomination": "gp",
+      "priceInGP": 3,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "charcoal_3_gp_",
+        "reagentType": "incense",
+        "isLootable": true,
+        "aliases": ["find familiar incense", "charcoal incense herbs"],
+        "sources": ["Find Familiar (consumed)"],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Incense (250 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 250,
+      "priceDenomination": "gp",
+      "priceInGP": 250,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "incense_250_gp_",
+        "reagentType": "incense",
+        "isLootable": true,
+        "aliases": ["legend lore incense"],
+        "sources": ["Legend Lore (consumed)"],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Rare Inks Infused with Precious Gems (25 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 25,
+      "priceDenomination": "gp",
+      "priceInGP": 25,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "rare_inks_25_gp_",
+        "reagentType": "ink",
+        "isLootable": true,
+        "aliases": [],
+        "sources": [],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Lead-Based Ink (10 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 10,
+      "priceDenomination": "gp",
+      "priceInGP": 10,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "lead_based_ink_10_gp_",
+        "reagentType": "ink",
+        "isLootable": true,
+        "aliases": ["illusory script ink"],
+        "sources": ["Illusory Script (consumed)"],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Rare Oils and Unguents (1,000 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 1000,
+      "priceDenomination": "gp",
+      "priceInGP": 1000,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "rare_oils_and_unguents_1_000_gp_",
+        "reagentType": "oil",
+        "isLootable": true,
+        "aliases": ["reincarnate oils"],
+        "sources": ["Reincarnate (consumed)"],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Arcane Focus (crystal - 5 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 5,
+      "priceDenomination": "gp",
+      "priceInGP": 5,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "arcane_focus_crystal_",
+        "reagentType": "focus",
+        "isLootable": true,
+        "aliases": ["arcane focus", "crystal focus"],
+        "sources": ["Various arcane spells (not consumed)"],
+        "consume": { "mode": "uses", "perCast": 0 }
+      }
+    }
+  },
+  {
+    "name": "Holy Symbol (5 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 5,
+      "priceDenomination": "gp",
+      "priceInGP": 5,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "holy_symbol_5_gp_",
+        "reagentType": "focus",
+        "isLootable": true,
+        "aliases": ["divine focus", "holy symbol focus"],
+        "sources": ["Various divine spells (not consumed)"],
+        "consume": { "mode": "uses", "perCast": 0 }
+      }
+    }
+  },
+  {
+    "name": "Scrying Focus (reflective) (1,000 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 1000,
+      "priceDenomination": "gp",
+      "priceInGP": 1000,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "scrying_focus_reflective_1_000_gp_",
+        "reagentType": "focus",
+        "isLootable": true,
+        "aliases": ["scrying focus mirror"],
+        "sources": ["Scrying (not consumed)"],
+        "consume": { "mode": "uses", "perCast": 0 }
+      }
+    }
+  },
+  {
+    "name": "Gem-Encrusted Bowl (1,000 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 1000,
+      "priceDenomination": "gp",
+      "priceInGP": 1000,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "gem_encrusted_bowl_1_000_gp_",
+        "reagentType": "focus",
+        "isLootable": true,
+        "aliases": ["heroes' feast bowl"],
+        "sources": ["Heroes’ Feast (consumed)"],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Exquisite Chest (5,000 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 5000,
+      "priceDenomination": "gp",
+      "priceInGP": 5000,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "exquisite_chest_5_000_gp_",
+        "reagentType": "focus",
+        "isLootable": true,
+        "aliases": ["leomund's secret chest components"],
+        "sources": ["Leomund’s Secret Chest (not consumed)"],
+        "consume": { "mode": "uses", "perCast": 0 }
+      }
+    }
+  },
+  {
+    "name": "Tiny Bell (5 sp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 5,
+      "priceDenomination": "sp",
+      "priceInGP": 0,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "tiny_bell_5_sp_",
+        "reagentType": "misc",
+        "isLootable": true,
+        "aliases": ["alarm bell", "silence bell"],
+        "sources": ["Alarm / Silence (not consumed)"],
+        "consume": { "mode": "uses", "perCast": 0 }
+      }
+    }
+  },
+  {
+    "name": "Tiny Tallow or Wax Doll (5 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 5,
+      "priceDenomination": "gp",
+      "priceInGP": 5,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "tiny_tallow_or_wax_doll_5_gp_",
+        "reagentType": "misc",
+        "isLootable": true,
+        "aliases": ["animate dead doll"],
+        "sources": ["Animate Dead (not consumed)"],
+        "consume": { "mode": "uses", "perCast": 0 }
+      }
+    }
+  },
+  {
+    "name": "Feather (5 cp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 5,
+      "priceDenomination": "cp",
+      "priceInGP": 0,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "feather_5_cp_",
+        "reagentType": "misc",
+        "isLootable": true,
+        "aliases": ["feather fall feather"],
+        "sources": ["Feather Fall (not consumed)"],
+        "consume": { "mode": "uses", "perCast": 0 }
+      }
+    }
+  },
+  {
+    "name": "Bit of Fleece (5 cp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 5,
+      "priceDenomination": "cp",
+      "priceInGP": 0,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "bit_of_fleece_5_cp_",
+        "reagentType": "misc",
+        "isLootable": true,
+        "aliases": ["silent image fleece", "major image fleece"],
+        "sources": ["Silent Image / Major Image (not consumed)"],
+        "consume": { "mode": "uses", "perCast": 0 }
+      }
+    }
+  },
+  {
+    "name": "Holy Water (25 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 25,
+      "priceDenomination": "gp",
+      "priceInGP": 25,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "holy_water_25_gp_",
+        "reagentType": "misc",
+        "isLootable": true,
+        "aliases": [],
+        "sources": [],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Rare Chalks Infused With Precious Gems (25 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 25,
+      "priceDenomination": "gp",
+      "priceInGP": 25,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "rare_chalks_infused_with_precious_gems_25_gp_",
+        "reagentType": "chalk",
+        "isLootable": true,
+        "aliases": ["teleportation circle chalks"],
+        "sources": ["Teleportation Circle (consumed)"],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Mixture (Mercury, Phosphorus, Powdered Diamond, Opal - 1,000 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 1000,
+      "priceDenomination": "gp",
+      "priceInGP": 1000,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "mixture_mercury_phosphorus_powdered_diamond_opal_1000_gp_",
+        "reagentType": "mixture",
+        "isLootable": true,
+        "aliases": [],
+        "sources": [],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Mixture (Herbs, Oils, Incense - 1,000 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 1000,
+      "priceDenomination": "gp",
+      "priceInGP": 1000,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "mixture_herbs_oils_incense_1000_gp_",
+        "reagentType": "mixture",
+        "isLootable": true,
+        "aliases": [],
+        "sources": [],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Crystal Vial (500 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 500,
+      "priceDenomination": "gp",
+      "priceInGP": 500,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "crystal_vial_500_gp_",
+        "reagentType": "container",
+        "isLootable": true,
+        "aliases": ["ruby vial"],
+        "sources": ["Summon Fiend (consumed)"],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+    "name": "Gem/Crystal/Reliquary/Ornate Container (500 gp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 500,
+      "priceDenomination": "gp",
+      "priceInGP": 500,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "gem_crystal_reliquary_ornate_container_500_gp_",
+        "reagentType": "container",
+        "isLootable": true,
+        "aliases": ["magic jar container"],
+        "sources": ["Magic Jar (not consumed)"],
+        "consume": { "mode": "uses", "perCast": 0 }
+      }
+    }
+  },
+  {
+    "name": "Carved Sigil Seal (250 cp)",
+    "type": "consumable",
+    "system": {
+      "quantity": 1,
+      "price": 250,
+      "priceDenomination": "cp",
+      "priceInGP": 2,
+      "description": "",
+      "reagentTracker": { "dualType": ["consumable", "loot"] }
+    },
+    "flags": {
+      "reagent-tracker": {
+        "reagentKey": "carved_sigil_seal_250_cp_",
+        "reagentType": "misc",
+        "isLootable": true,
+        "aliases": [],
+        "sources": [],
+        "consume": { "mode": "quantity", "perCast": 1 }
+      }
+    }
+  },
+  {
+  "name": "Bat Guano (5 gp)",
+  "type": "consumable",
+  "system": {
+    "quantity": 1,
+    "price": { "value": 5, "denomination": "gp" },
+    "priceInGP": 5,
+    "description": "A small lump of bat guano, used as a material component for Fireball and similar spells.",
+    "reagentTracker": { "dualType": ["consumable", "loot"] }
+  },
+  "flags": {
+    "reagent-tracker": {
+      "reagentKey": "bat_guano_5_gp_",
+      "reagentType": "material",
+      "isLootable": true,
+      "aliases": ["bat dung", "fireball reagent"],
+      "sources": ["Player's Handbook"],
+      "consumed": true
+    }
+  }
+}
+]
+
