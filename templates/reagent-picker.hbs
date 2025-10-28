@@ -12,15 +12,14 @@
       <select name="compUuid"
         style="width:100%; max-width:100%; font-size:.95em; padding:.25rem;
                overflow:hidden; text-overflow:ellipsis;">
-  <option value="" {{#unless current.reagentUUID}}selected{{/unless}}>— No Reagent Selected —</option>
-  {{#each (sort compendium 'name')}}
-    <option value="{{this.uuid}}"
-      {{#if (eq ../current.reagentUUID this.uuid)}}selected{{/if}}>
-      {{this.name}}
-    </option>
-  {{/each}}
-</select>
-
+        <option value="" {{#unless current.reagentUUID}}selected{{/unless}}>— No Reagent Selected —</option>
+        {{#each (sort compendium 'name')}}
+          <option value="{{this.uuid}}"
+            {{#if (eq ../current.reagentUUID this.uuid)}}selected{{/if}}>
+            {{this.name}}
+          </option>
+        {{/each}}
+      </select>
 
       {{#if current.reagentUUID}}
         <div style="margin-top:.4rem; font-size:.85em; color:#444;">
@@ -43,19 +42,7 @@
       {{/if}}
     </div>
 
-    <h3 style="font-weight:bold; font-size:1.1em; margin-top:.75rem; color:black;">Override Options:</h3>
-
-    <div class="form-group">
-      <label>Minimum Cost (gp)</label>
-      <input type="number" name="minCost" value="{{current.minCost}}" min="0" step="1"
-             style="width:6rem; font-size:.9em;">
-    </div>
-
-    <div class="form-group">
-      <label>Quantity Required</label>
-      <input type="number" name="quantity" value="{{current.quantity}}" min="1" step="1"
-             style="width:4rem; font-size:.9em;">
-    </div>
+    <h3 style="font-weight:bold; font-size:1.1em; margin-top:.75rem; color:black;">Options:</h3>
 
     <div class="form-group">
       <label><input type="checkbox" name="consumed" {{#if current.consumed}}checked{{/if}}> Consumed on Cast</label>

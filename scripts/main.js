@@ -272,9 +272,158 @@ Handlebars.registerHelper('sort', function (arr, field) {
   );
 });
 
+// ============================================================================
+// ⚙️ Foundry Init — register settings + initialize SpellMapData
+// ============================================================================
 Hooks.once("init", () => {
-   registerSettings();
+  const MODULE_ID = "reagent-tracker";
+  console.log(`[${MODULE_ID}] Initializing module...`);
+
+  // --- Register base settings ----------------------------------------------
+  registerSettings();
+
+  game.settings.register(MODULE_ID, "autoConsumeOnCast", {
+    name: "Auto-consume reagents on cast",
+    hint: "Disable to stop all reagent consumption globally until re-enabled.",
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: true,
+    onChange: (value) => {
+      ui.notifications.info(
+        value
+          ? "Auto-consume re-enabled. Restart Foundry to restore consume flags."
+          : "Auto-consume disabled. Restart Foundry to apply changes."
+      );
+    }
+  });
+
+  // --- Initialize SpellMapData early ---------------------------------------
+  console.log(`[${MODULE_ID}] Initializing SpellMapData...`);
+
+  const SpellMapData =
+    globalThis.SpellMapData && typeof globalThis.SpellMapData.getMap === "function"
+      ? globalThis.SpellMapData
+      : {
+          // 🧩 Retrieve Spell → Reagent mappings
+          getMap: () => {
+            const data = game.settings.get(MODULE_ID, "spellMap");
+            if (!Array.isArray(data)) return [];
+            return data.map(entry => ({
+              ...entry,
+              reagentKey:
+                entry?.reagentKey ??
+                entry?.flags?.["reagent-tracker"]?.reagentKey ??
+                null,
+              reagentUUID: entry?.reagentUUID ?? null,
+              priceInGP:
+                entry?.priceInGP ??
+                entry?.system?.priceInGP ??
+                entry?.system?.price?.value ??
+                null,
+            }));
+          },
+
+          // 🧩 Write SpellMap to settings
+          setMap: async (rows) => game.settings.set(MODULE_ID, "spellMap", rows),
+
+          // 🧩 Optional helper: list world packs
+          packsToScan: () => game.packs.filter(p => p.metadata.packageType === "world"),
+        };
+
+  // --- Expose globally for other scripts -----------------------------------
+  globalThis.reagentTracker = globalThis.reagentTracker || {};
+  globalThis.reagentTracker.SpellMapData = SpellMapData;
+  globalThis.SpellMapData = SpellMapData;
+
+// ========================================================================
+// 🗃️ backupSpellMap (real implementation)
+// ========================================================================
+  globalThis.backupSpellMap = async function backupSpellMap(payload) {
+    const MODULE_ID = "reagent-tracker";
+    try {
+      // Respect Auto-Consume toggle
+      const autoEnabled = game.settings.get(MODULE_ID, "autoConsumeOnCast");
+      if (!autoEnabled) {
+        console.log(`[${MODULE_ID}] backupSpellMap skipped — Auto-Consume disabled.`);
+        return false;
+      }
+
+      // Determine which map to back up
+      const mapData = Array.isArray(payload)
+        ? payload
+        : globalThis.SpellMapData?.getMap?.() ?? [];
+
+      if (!Array.isArray(mapData) || !mapData.length) {
+        console.warn(`[${MODULE_ID}] backupSpellMap found no map entries to back up.`);
+        return false;
+      }
+
+      // Ensure the hidden world setting exists
+      if (!game.settings.settings.has(`${MODULE_ID}.spellMapBackup`)) {
+        game.settings.register(MODULE_ID, "spellMapBackup", {
+          name: "Spell Map Backup Data",
+          scope: "world",
+          config: false,   // hidden
+          type: String,
+          default: "",
+        });
+      }
+
+      // Serialize + persist
+      const json = JSON.stringify(mapData);
+      await game.settings.set(MODULE_ID, "spellMapBackup", json);
+      console.log(`[${MODULE_ID}] backupSpellMap stored ${mapData.length} entries in world setting.`);
+      return true;
+    } catch (err) {
+      console.error(`[${MODULE_ID}] backupSpellMap error`, err);
+      return false;
+    }
+  };
+
+    // Optional: simple restore utility (future use)
+    globalThis.restoreSpellMap = async function restoreSpellMap() {
+      const MODULE_ID = "reagent-tracker";
+      try {
+        const json = game.settings.get(MODULE_ID, "spellMapBackup");
+        if (!json) {
+          console.log(`[${MODULE_ID}] restoreSpellMap → no backup data found.`);
+          return false;
+        }
+
+        const data = JSON.parse(json);
+        if (!Array.isArray(data) || !data.length) {
+          console.warn(`[${MODULE_ID}] restoreSpellMap → backup empty or invalid.`);
+          return false;
+        }
+
+        if (typeof globalThis.SpellMapData?.setMap === "function") {
+          await globalThis.SpellMapData.setMap(data);
+          console.log(`[${MODULE_ID}] restoreSpellMap restored ${data.length} entries to SpellMap.`);
+          return true;
+        }
+
+        console.warn(`[${MODULE_ID}] restoreSpellMap → SpellMapData.setMap missing.`);
+        return false;
+      } catch (err) {
+        console.error(`[${MODULE_ID}] restoreSpellMap error`, err);
+        return false;
+      }
+    };
+
+  console.log(`[${MODULE_ID}] SpellMapData initialized and backupSpellMap stub registered.`);
+
+  // --- Hidden backup store -----------------------------------------
+  game.settings.register(MODULE_ID, "spellMapBackup", {
+    name: "Auto-Consume SpellMap backup data",
+    scope: "world",
+    config: false,      // hidden from the settings UI
+    type: String,
+    default: "",
+  });
+
 });
+
 
 
 Hooks.once("ready", async () => {
@@ -312,7 +461,7 @@ Hooks.once("ready", async () => {
     globalThis.repairReagentCompendium = repairReagentCompendium;
     game.reagentTrackerRepair = repairReagentCompendium;
     globalThis.reagentTracker.consumptionLogic = consumptionLogic;
-    
+      
     // 🔗 Also attach the reagentIntel subsystem if not already initialized
     if (globalThis.reagentTracker?.reagentIntel) {
       globalThis.reagentTracker.reagentIntel.findUpgradedReagentOnActor = findUpgradedReagentOnActor;
@@ -363,121 +512,152 @@ Hooks.once("ready", async () => {
     }
   }
 
-
 // ============================================================================
 // 💎 promptUseHigherValue — marks approvedUpgrade only (no recast here)
 // ============================================================================
-async function promptUseHigherValue(actor, item, upgraded) {
-  const MODULE_ID = "reagent-tracker";
-  try {
-    const speaker     = ChatMessage.getSpeaker({ actor });
-    const upgradeName = upgraded?.itemName ?? upgraded?.item?.name ?? "(unknown)";
-    const valueGP     = upgraded?.valueGP ?? "?";
-    const baseCost    = upgraded?.minCost ?? 0;
+  async function promptUseHigherValue(actor, item, upgraded) {
+    const MODULE_ID = "reagent-tracker";
+    try {
+      const speaker     = ChatMessage.getSpeaker({ actor });
+      const upgradeName = upgraded?.itemName ?? upgraded?.item?.name ?? "(unknown)";
+      const valueGP     = upgraded?.valueGP ?? "?";
+      const baseCost    = upgraded?.minCost ?? 0;
 
-    // 🔍 Diagnostic snapshot
-    {
-      const intel = reagentTracker.reagentIntel?.cache?.get(actor.id);
-      const spellState = intel?.spells?.[item.id];
-      console.log(`[${MODULE_ID}] [prompt] opening prompt for ${actor.name}/${item.name}`, {
-        upgradeName, valueGP, baseCost,
-        cacheHasIntel: !!intel,
-        cacheHasSpellEntry: !!spellState,
-        approvedUpgrade_beforePrompt: spellState?.approvedUpgrade
+      // 🔍 Diagnostic snapshot
+      {
+        const intel = reagentTracker.reagentIntel?.cache?.get(actor.id);
+        const spellState = intel?.spells?.[item.id];
+        console.log(`[${MODULE_ID}] [prompt] opening prompt for ${actor.name}/${item.name}`, {
+          upgradeName, valueGP, baseCost,
+          cacheHasIntel: !!intel,
+          cacheHasSpellEntry: !!spellState,
+          approvedUpgrade_beforePrompt: spellState?.approvedUpgrade
+        });
+      }
+
+      // Build the chat prompt
+      const content = `
+        <div class="reagent-tracker-prompt" style="padding:.5rem;">
+          💎 <b>${actor.name}</b> has a more valuable reagent available for <b>${item.name}</b>:<br>
+          <b>${upgradeName}</b> (${valueGP} gp) vs minimum ${baseCost} gp.<br><br>
+          Use it to cast the spell?<br><br>
+          <button class="rt-accept" style="background:#4a7350;color:white;padding:.25rem .75rem;border:none;border-radius:4px;margin-right:.5rem;">✅ Use</button>
+          <button class="rt-decline" style="background:#a33;color:white;padding:.25rem .75rem;border:none;border-radius:4px;">❌ Decline</button>
+        </div>`;
+
+      // Create the chat message
+      await new Promise(r => setTimeout(r, 150));
+      const chat = await ChatMessage.create({
+        speaker, content, whisper: [],
+        flags: { [MODULE_ID]: { isPrompt: true } }
       });
-    }
+      console.log(`[${MODULE_ID}] promptUseHigherValue message created id=${chat.id}`);
 
-    // Build the chat prompt
-    const content = `
-      <div class="reagent-tracker-prompt" style="padding:.5rem;">
-        💎 <b>${actor.name}</b> has a more valuable reagent available for <b>${item.name}</b>:<br>
-        <b>${upgradeName}</b> (${valueGP} gp) vs minimum ${baseCost} gp.<br><br>
-        Use it to cast the spell?<br><br>
-        <button class="rt-accept" style="background:#4a7350;color:white;padding:.25rem .75rem;border:none;border-radius:4px;margin-right:.5rem;">✅ Use</button>
-        <button class="rt-decline" style="background:#a33;color:white;padding:.25rem .75rem;border:none;border-radius:4px;">❌ Decline</button>
-      </div>`;
+      // Wait briefly to ensure DOM ready
+      await new Promise(r => setTimeout(r, 250));
+      const html = document.querySelector(`[data-message-id="${chat.id}"]`);
+      const safeDelete = async () => { await new Promise(r => setTimeout(r, 200)); try { await chat.delete(); } catch (_) {} };
 
-    // Create the chat message
-    await new Promise(r => setTimeout(r, 150));
-    const chat = await ChatMessage.create({
-      speaker, content, whisper: [],
-      flags: { [MODULE_ID]: { isPrompt: true } }
-    });
-    console.log(`[${MODULE_ID}] promptUseHigherValue message created id=${chat.id}`);
+      if (!html) {
+        console.warn(`[${MODULE_ID}] promptUseHigherValue: could not locate message HTML for ${chat.id}`);
+        return { ok: false };
+      }
 
-    // Wait briefly to ensure DOM ready
-    await new Promise(r => setTimeout(r, 250));
-    const html = document.querySelector(`[data-message-id="${chat.id}"]`);
-    const safeDelete = async () => { await new Promise(r => setTimeout(r, 200)); try { await chat.delete(); } catch (_) {} };
+      const acceptBtn  = html.querySelector(".rt-accept");
+      const declineBtn = html.querySelector(".rt-decline");
 
-    if (!html) {
-      console.warn(`[${MODULE_ID}] promptUseHigherValue: could not locate message HTML for ${chat.id}`);
+      // ✅ ACCEPT → mark approval only
+      acceptBtn?.addEventListener("click", async ev => {
+        ev.preventDefault();
+        console.log(`[${MODULE_ID}] ✅ ACCEPT clicked for ${chat.id}`);
+
+        const intel = reagentTracker.reagentIntel?.cache?.get(actor.id);
+        const spellState = intel?.spells?.[item.id];
+
+        if (spellState) {
+          // Mark approval and store upgradeChoice — DO NOT clear later
+          spellState.approvedUpgrade = true;
+          spellState.upgradeChoice = {
+            reagentKey: upgraded?.reagentKey ?? upgraded?.item?.getFlag?.(MODULE_ID,"reagentKey") ?? null,
+            itemId: upgraded?.item?.id ?? null,
+            valueGP: upgraded?.valueGP ?? null,
+            name: upgradeName
+          };
+          reagentTracker.reagentIntel?.cache?.set(actor.id, intel);
+        }
+
+        console.log(`[${MODULE_ID}] [prompt] set approvedUpgrade`, {
+          approvedUpgrade_after: spellState?.approvedUpgrade,
+          upgradeChoice_after: spellState?.upgradeChoice
+        });
+
+        ui.notifications.info(`${actor.name} approved use of a higher-value reagent for ${item.name}.`);
+        await safeDelete();
+
+        // ✅ Signal to dnd5e that approval is complete; dnd5e will handle recast.
+        Hooks.callAll(`rtPrompt:${chat.id}`, { ok: true });
+      });
+
+      // ❌ DECLINE → cleanup and exit
+      declineBtn?.addEventListener("click", async ev => {
+        ev.preventDefault();
+        console.log(`[${MODULE_ID}] ❌ DECLINE clicked for ${chat.id}`);
+        const intel = reagentTracker.reagentIntel?.cache?.get(actor.id);
+        const spellState = intel?.spells?.[item.id];
+        if (spellState) {
+          delete spellState.upgradeChoice;
+          reagentTracker.reagentIntel?.cache?.set(actor.id, intel);
+        }
+        ui.notifications.warn(`${actor.name} declined the higher-value reagent for ${item.name}.`);
+        await safeDelete();
+        Hooks.callAll(`rtPrompt:${chat.id}`, { ok: false });
+      });
+
+      // Diagnostic resolver
+      return new Promise(resolve => {
+        Hooks.once(`rtPrompt:${chat.id}`, result => {
+          console.log(`[${MODULE_ID}] 🧩 promptUseHigherValue resolved for ${item.name}:`, result);
+          resolve(result);
+        });
+      });
+
+    } catch (err) {
+      console.error(`[${MODULE_ID}] promptUseHigherValue error`, err);
       return { ok: false };
     }
-
-    const acceptBtn  = html.querySelector(".rt-accept");
-    const declineBtn = html.querySelector(".rt-decline");
-
-    // ✅ ACCEPT → mark approval only
-    acceptBtn?.addEventListener("click", async ev => {
-      ev.preventDefault();
-      console.log(`[${MODULE_ID}] ✅ ACCEPT clicked for ${chat.id}`);
-
-      const intel = reagentTracker.reagentIntel?.cache?.get(actor.id);
-      const spellState = intel?.spells?.[item.id];
-
-      if (spellState) {
-        // Mark approval and store upgradeChoice — DO NOT clear later
-        spellState.approvedUpgrade = true;
-        spellState.upgradeChoice = {
-          reagentKey: upgraded?.reagentKey ?? upgraded?.item?.getFlag?.(MODULE_ID,"reagentKey") ?? null,
-          itemId: upgraded?.item?.id ?? null,
-          valueGP: upgraded?.valueGP ?? null,
-          name: upgradeName
-        };
-        reagentTracker.reagentIntel?.cache?.set(actor.id, intel);
-      }
-
-      console.log(`[${MODULE_ID}] [prompt] set approvedUpgrade`, {
-        approvedUpgrade_after: spellState?.approvedUpgrade,
-        upgradeChoice_after: spellState?.upgradeChoice
-      });
-
-      ui.notifications.info(`${actor.name} approved use of a higher-value reagent for ${item.name}.`);
-      await safeDelete();
-
-      // ✅ Signal to dnd5e that approval is complete; dnd5e will handle recast.
-      Hooks.callAll(`rtPrompt:${chat.id}`, { ok: true });
-    });
-
-    // ❌ DECLINE → cleanup and exit
-    declineBtn?.addEventListener("click", async ev => {
-      ev.preventDefault();
-      console.log(`[${MODULE_ID}] ❌ DECLINE clicked for ${chat.id}`);
-      const intel = reagentTracker.reagentIntel?.cache?.get(actor.id);
-      const spellState = intel?.spells?.[item.id];
-      if (spellState) {
-        delete spellState.upgradeChoice;
-        reagentTracker.reagentIntel?.cache?.set(actor.id, intel);
-      }
-      ui.notifications.warn(`${actor.name} declined the higher-value reagent for ${item.name}.`);
-      await safeDelete();
-      Hooks.callAll(`rtPrompt:${chat.id}`, { ok: false });
-    });
-
-    // Diagnostic resolver
-    return new Promise(resolve => {
-      Hooks.once(`rtPrompt:${chat.id}`, result => {
-        console.log(`[${MODULE_ID}] 🧩 promptUseHigherValue resolved for ${item.name}:`, result);
-        resolve(result);
-      });
-    });
-
-  } catch (err) {
-    console.error(`[${MODULE_ID}] promptUseHigherValue error`, err);
-    return { ok: false };
   }
-}
+
+  // ---- Link existing backupSpellMap (do NOT define it here) -------------------
+  (() => {
+    const TAG = `[${MODULE_ID}][backupLinker:v32b]`;
+
+    // prefer already-loaded hoisted function; otherwise retry briefly for late-bound const
+    const tryLink = () => {
+      const fn =
+        (typeof backupSpellMap === "function" ? backupSpellMap : undefined) ||
+        globalThis.backupSpellMap; // if you chose to attach it globally elsewhere
+
+      if (typeof fn === "function") {
+        // expose on API + global
+        mod.api = { ...(mod.api ?? {}), backupSpellMap: fn };
+        globalThis.reagentTracker = { ...(globalThis.reagentTracker ?? {}), backupSpellMap: fn };
+        console.log(`${TAG} linked backupSpellMap to mod.api and reagentTracker.`);
+        return true;
+      }
+      return false;
+    };
+
+    if (tryLink()) return;
+
+    // retry up to ~1s for late-bound const backupSpellMap defined below
+    let tries = 0;
+    const id = setInterval(() => {
+      if (tryLink() || ++tries > 20) {
+        if (tries > 20) console.warn(`${TAG} no backupSpellMap found to link.`);
+        clearInterval(id);
+      }
+    }, 50);
+  })();
 
 
 
@@ -504,195 +684,298 @@ async function promptUseHigherValue(actor, item, upgraded) {
     return `${a}:${i}:${c}`;
   }
 
+// ============================================================================
+// 🧩 Global helper: applyAutoConsumeChange(value, prev)
+// Handles backup/restore logic when the Auto-Consume checkbox changes
+// ============================================================================
+globalThis.reagentTracker.applyAutoConsumeChange = async function (value, prev) {
+  const MODULE_ID = "reagent-tracker";
+  try {
+    // --------------------------------------------------------------
+    // ♻️ Re-enable → restore from backup
+    // --------------------------------------------------------------
+    if (value && prev === false) {
+      console.log(`[${MODULE_ID}] Auto-Consume re-enabled → attempting restore from backup...`);
+      const json = game.settings.get(MODULE_ID, "spellMapBackup");
+      if (json && json.length > 10) {
+        try {
+          const data = JSON.parse(json);
+          if (Array.isArray(data) && data.length) {
+            await globalThis.SpellMapData.setMap(data);
+            console.log(`[${MODULE_ID}] Restored ${data.length} Spell Map entries from backup.`);
+            await game.settings.set(MODULE_ID, "spellMapBackup", ""); // optional cleanup
+          } else {
+            console.warn(`[${MODULE_ID}] Backup empty or invalid; skipped restore.`);
+          }
+        } catch (err) {
+          console.error(`[${MODULE_ID}] Restore error:`, err);
+        }
+      } else {
+        console.log(`[${MODULE_ID}] No Spell Map backup data to restore.`);
+      }
+
+      // 🔄 Clear cache bypass on re-enable
+      const cache = reagentTracker?.reagentIntel?.cache;
+      if (cache && cache.size) {
+        for (const [actorId, intel] of cache.entries()) {
+          intel.bypassEnforcement = false;
+        }
+        console.log(`[${MODULE_ID}] Cache updated → bypassEnforcement = false for ${cache.size} actor(s).`);
+      }
+    }
+
+    // --------------------------------------------------------------
+    // ⛔ Disable → backup and strip all consumption flags
+    // --------------------------------------------------------------
+    else if (value === false) {
+      console.log(`[${MODULE_ID}] Auto-Consume disabled → backing up and stripping consumption flags…`);
+      const map = globalThis.SpellMapData?.getMap?.() ?? [];
+      if (Array.isArray(map) && map.length) {
+        // 1️⃣ Backup current map
+        await game.settings.set(MODULE_ID, "spellMapBackup", JSON.stringify(map));
+
+        // 2️⃣ Clone and strip consumption flags (top-level + nested)
+        const stripped = map.map(entry => {
+          const e = { ...entry, consumed: false };
+
+          // Ensure reagents are non-consumable
+          if (Array.isArray(e.reagents)) {
+            e.reagents = e.reagents.map(r => ({ ...r, consumed: false }));
+          }
+
+          // Ensure system.materials.consumed = false if present
+          e.system = {
+            ...(e.system ?? {}),
+            materials: {
+              ...(e.system?.materials ?? {}),
+              consumed: false
+            }
+          };
+
+          return e;
+        });
+
+        // 3️⃣ Mark cache to bypass enforcement
+        const cache = reagentTracker?.reagentIntel?.cache;
+        if (cache && cache.size) {
+          for (const [actorId, intel] of cache.entries()) {
+            intel.bypassEnforcement = true;
+          }
+          console.log(`[${MODULE_ID}] Cache updated → bypassEnforcement = true for ${cache.size} actor(s).`);
+        }
+
+        // 4️⃣ Save stripped map back to settings
+        await globalThis.SpellMapData.setMap(stripped);
+        console.log(`[${MODULE_ID}] Stripped consumption flags from ${stripped.length} Spell Map entries.`);
+      } else {
+        console.warn(`[${MODULE_ID}] Auto-Consume disabled but Spell Map empty or invalid.`);
+      }
+    }
+
+    // --------------------------------------------------------------
+    // 🪧 User-facing toast
+    // --------------------------------------------------------------
+    const msg = value
+      ? "Auto-consume has been re-enabled."
+      : "Auto-consume has been disabled. Reagents will not be consumed until re-enabled.";
+    ui.notifications.info(msg);
+
+  } catch (err) {
+    console.error(`[${MODULE_ID}] applyAutoConsumeChange error`, err);
+  }
+};
+
+
+
 // =====================================================================================
 //  CONSUMPTION LOGIC — v31r (stable, post-consumption rebuild)
 //  • Fixes over-consumption bug
 //  • Ensures post-cast rebuild after inventory updates
 //  • Clears approvedUpgrade flag and casting guard safely
 // =====================================================================================
-async function consumptionLogic(actor, item) {
-  const MODULE_ID = "reagent-tracker";
+  async function consumptionLogic(actor, item) {
+    const MODULE_ID = "reagent-tracker";
 
-  try {
-    if (!actor || !item) return true;
-    console.log(`[${MODULE_ID}] [consumptionLogic] ENTER → ${actor.name}/${item.name}`);
+    try {
+      if (!actor || !item) return true;
+      console.log(`[${MODULE_ID}] [consumptionLogic] ENTER → ${actor.name}/${item.name}`);
 
-    const intel = reagentTracker.reagentIntel?.cache?.get(actor.id);
-    if (!intel) {
-      console.log(`[${MODULE_ID}] [consumptionLogic] no intel in cache for actor ${actor.name}`);
-      reagentTracker._castingActors.delete(actor.id);
-      return true;
-    }
-
-    const originalId = item.getFlag(MODULE_ID, "originalItemId");
-    const spellEntry = intel.spells?.[originalId ?? item.id];
-
-    // Snapshot
-    console.log(`[${MODULE_ID}] [consumptionLogic] cache snapshot`, {
-      actor: actor.name, item: item.name,
-      originalId: originalId ?? null,
-      hasSpellEntry: !!spellEntry,
-      approvedUpgrade: spellEntry?.approvedUpgrade,
-      hasUpgrade: !!spellEntry?.hasUpgrade,
-      hasExact: !!spellEntry?.hasExact,
-      reagentKey: spellEntry?.reagentKey,
-      upgrade: spellEntry?.upgrade
-    });
-
-    if (!spellEntry) {
-      console.log(`[${MODULE_ID}] ${item.name} → not reagent-linked or cache missing`);
-      reagentTracker._castingActors.delete(actor.id);
-      return true;
-    }
-
-    if (spellEntry.missing || spellEntry.hasMissing) {
-      console.log(`[${MODULE_ID}] ${actor.name} ${item.name} skipped consumption (missing reagent).`);
-      reagentTracker._castingActors.delete(actor.id);
-      return true;
-    }
-
-    let reagentItem = null;
-    let logLabel = "(unknown)";
-
-    // ---------------------------------------------------------------------
-    // 🔹 Case 1 — Approved Upgrade
-    // ---------------------------------------------------------------------
-    if (spellEntry.approvedUpgrade === true) {
-      const upgradeData = spellEntry.upgrade ?? {};
-      const upName = upgradeData.itemName?.toLowerCase() ?? "";
-
-      console.log(`[${MODULE_ID}] [consumptionLogic] attempting UPGRADE consumption`, upgradeData);
-
-      const upgradeItem =
-        actor.items.get(upgradeData.itemId) ||
-        actor.items.find(i =>
-          i.name?.toLowerCase() === upName ||
-          i.getFlag(MODULE_ID, "reagentKey") === upgradeData.reagentKey
-        );
-
-      console.log(`[${MODULE_ID}] [consumptionLogic] resolved upgrade item:`, {
-        found: !!upgradeItem,
-        id: upgradeItem?.id,
-        name: upgradeItem?.name,
-        key: upgradeItem?.getFlag?.(MODULE_ID, "reagentKey")
-      });
-
-      if (!upgradeItem) {
-        ui.notifications.warn(`${actor.name} → ${item.name}: upgrade reagent missing, skipping consumption.`);
+      const intel = reagentTracker.reagentIntel?.cache?.get(actor.id);
+      if (!intel) {
+        console.log(`[${MODULE_ID}] [consumptionLogic] no intel in cache for actor ${actor.name}`);
         reagentTracker._castingActors.delete(actor.id);
         return true;
       }
 
-      const expectedKey = upgradeData.reagentKey;
-      const foundKey = upgradeItem.getFlag(MODULE_ID, "reagentKey");
-      if (expectedKey && foundKey && foundKey !== expectedKey) {
-        ui.notifications.warn(`${item.name}: upgrade reagent mismatch, skipping consumption.`);
-        console.warn(`[${MODULE_ID}] ${actor.name} ${item.name}: key mismatch (expected ${expectedKey}, found ${foundKey}).`);
+      const originalId = item.getFlag(MODULE_ID, "originalItemId");
+      const spellEntry = intel.spells?.[originalId ?? item.id];
+
+      // Snapshot
+      console.log(`[${MODULE_ID}] [consumptionLogic] cache snapshot`, {
+        actor: actor.name, item: item.name,
+        originalId: originalId ?? null,
+        hasSpellEntry: !!spellEntry,
+        approvedUpgrade: spellEntry?.approvedUpgrade,
+        hasUpgrade: !!spellEntry?.hasUpgrade,
+        hasExact: !!spellEntry?.hasExact,
+        reagentKey: spellEntry?.reagentKey,
+        upgrade: spellEntry?.upgrade
+      });
+
+      if (!spellEntry) {
+        console.log(`[${MODULE_ID}] ${item.name} → not reagent-linked or cache missing`);
         reagentTracker._castingActors.delete(actor.id);
         return true;
       }
 
-      reagentItem = upgradeItem;
-      logLabel = upgradeItem.name ?? upgradeData.itemName ?? "(upgrade)";
-      console.log(`[${MODULE_ID}] ${actor.name} ${item.name} consuming approved upgrade.`);
-    }
-
-    // ---------------------------------------------------------------------
-    // 🔹 Case 2 — Standard Exact Reagent
-    // ---------------------------------------------------------------------
-    else if (spellEntry.hasExact && spellEntry.reagentKey) {
-      console.log(`[${MODULE_ID}] [consumptionLogic] attempting STANDARD consumption`, {
-        reagentKey: spellEntry.reagentKey
-      });
-
-      reagentItem = actor.items.find(i => {
-        const key =
-          i.flags?.[MODULE_ID]?.reagentKey ??
-          i.getFlag?.(MODULE_ID, "reagentKey");
-        return key === spellEntry.reagentKey;
-      });
-
-      console.log(`[${MODULE_ID}] [consumptionLogic] resolved standard item:`, {
-        found: !!reagentItem, id: reagentItem?.id, name: reagentItem?.name
-      });
-
-      logLabel = reagentItem?.name ?? spellEntry.reagentKey;
-      console.log(`[${MODULE_ID}] ${actor.name} ${item.name} consuming standard reagent.`);
-    }
-
-    // ---------------------------------------------------------------------
-    // 🔹 Case 3 — Upgrade Available But Not Approved
-    // ---------------------------------------------------------------------
-    else if (spellEntry.hasUpgrade && !spellEntry.approvedUpgrade) {
-      console.log(`[${MODULE_ID}] [consumptionLogic] Upgrade available but NOT approved → skipping consumption`);
-      reagentTracker._castingActors.delete(actor.id);
-      return true;
-    }
-
-    // ---------------------------------------------------------------------
-    // 🔹 Safety
-    // ---------------------------------------------------------------------
-    if (!reagentItem) {
-      console.warn(`[${MODULE_ID}] ${actor.name} ${item.name} could not locate reagent item — skipping consumption.`);
-      reagentTracker._castingActors.delete(actor.id);
-      return true;
-    }
-
-    const guardKey = _makeConsumeKey(item, Date.now());
-    if (_castConsumeGuards.has(guardKey)) {
-      console.log(`[${MODULE_ID}] duplicate consumption guard for ${item.name} — skipping.`);
-      reagentTracker._castingActors.delete(actor.id);
-      return true;
-    }
-    _castConsumeGuards.add(guardKey);
-
-    // ---------------------------------------------------------------------
-    // 🔹 Determine quantity (fixed)
-    // ---------------------------------------------------------------------
-    let qtyNeeded = 1;
-    const spellQty = Number(spellEntry?.quantity ?? 0);
-    if (spellQty > 1) qtyNeeded = spellQty;
-
-    console.log(`[${MODULE_ID}] [consumptionLogic] using qtyNeeded=${qtyNeeded}`);
-
-    // ---------------------------------------------------------------------
-    // 🔹 Consume
-    // ---------------------------------------------------------------------
-    const res = await consumeReagentFromInventory(actor, reagentItem, qtyNeeded);
-    console.log(
-      `[${MODULE_ID}] CONSUME ${actor.name} ${item.name}: ${logLabel} → used ${res.consumed} (updates=${res.updates}, deleted=${res.deleted})`
-    );
-
-    // ---------------------------------------------------------------------
-    // 🔹 Clear flags and guards
-    // ---------------------------------------------------------------------
-    if (spellEntry.approvedUpgrade) {
-      console.log(`[${MODULE_ID}] [consumptionLogic] clearing approvedUpgrade after consumption`);
-      delete spellEntry.approvedUpgrade;
-    }
-
-    reagentTracker._castingActors.delete(actor.id);
-    console.log(`[${MODULE_ID}] cleared casting guard after ${item.name}`);
-
-    // ---------------------------------------------------------------------
-    // 🧠 Post-consumption cache rebuild (delayed)
-    // ---------------------------------------------------------------------
-    setTimeout(async () => {
-      try {
-        console.log(`[${MODULE_ID}] [consumptionLogic] rebuilding reagent cache for ${actor.name} post-consumption`);
-        await reagentTracker.reagentIntel?.buildActorReagentState(actor);
-      } catch (err) {
-        console.warn(`[${MODULE_ID}] post-consumption rebuild failed for ${actor.name}`, err);
+      if (spellEntry.missing || spellEntry.hasMissing) {
+        console.log(`[${MODULE_ID}] ${actor.name} ${item.name} skipped consumption (missing reagent).`);
+        reagentTracker._castingActors.delete(actor.id);
+        return true;
       }
-    }, 500);
 
-    return true;
+      let reagentItem = null;
+      let logLabel = "(unknown)";
 
-  } catch (err) {
-    console.error(`[${MODULE_ID}] consumptionLogic error`, err);
-    if (actor) reagentTracker._castingActors.delete(actor.id);
-    return true;
-  }
+      // ---------------------------------------------------------------------
+      // 🔹 Case 1 — Approved Upgrade
+      // ---------------------------------------------------------------------
+      if (spellEntry.approvedUpgrade === true) {
+        const upgradeData = spellEntry.upgrade ?? {};
+        const upName = upgradeData.itemName?.toLowerCase() ?? "";
+
+        console.log(`[${MODULE_ID}] [consumptionLogic] attempting UPGRADE consumption`, upgradeData);
+
+        const upgradeItem =
+          actor.items.get(upgradeData.itemId) ||
+          actor.items.find(i =>
+            i.name?.toLowerCase() === upName ||
+            i.getFlag(MODULE_ID, "reagentKey") === upgradeData.reagentKey
+          );
+
+        console.log(`[${MODULE_ID}] [consumptionLogic] resolved upgrade item:`, {
+          found: !!upgradeItem,
+          id: upgradeItem?.id,
+          name: upgradeItem?.name,
+          key: upgradeItem?.getFlag?.(MODULE_ID, "reagentKey")
+        });
+
+        if (!upgradeItem) {
+          ui.notifications.warn(`${actor.name} → ${item.name}: upgrade reagent missing, skipping consumption.`);
+          reagentTracker._castingActors.delete(actor.id);
+          return true;
+        }
+
+        const expectedKey = upgradeData.reagentKey;
+        const foundKey = upgradeItem.getFlag(MODULE_ID, "reagentKey");
+        if (expectedKey && foundKey && foundKey !== expectedKey) {
+          ui.notifications.warn(`${item.name}: upgrade reagent mismatch, skipping consumption.`);
+          console.warn(`[${MODULE_ID}] ${actor.name} ${item.name}: key mismatch (expected ${expectedKey}, found ${foundKey}).`);
+          reagentTracker._castingActors.delete(actor.id);
+          return true;
+        }
+
+        reagentItem = upgradeItem;
+        logLabel = upgradeItem.name ?? upgradeData.itemName ?? "(upgrade)";
+        console.log(`[${MODULE_ID}] ${actor.name} ${item.name} consuming approved upgrade.`);
+      }
+
+      // ---------------------------------------------------------------------
+      // 🔹 Case 2 — Standard Exact Reagent
+      // ---------------------------------------------------------------------
+      else if (spellEntry.hasExact && spellEntry.reagentKey) {
+        console.log(`[${MODULE_ID}] [consumptionLogic] attempting STANDARD consumption`, {
+          reagentKey: spellEntry.reagentKey
+        });
+
+        reagentItem = actor.items.find(i => {
+          const key =
+            i.flags?.[MODULE_ID]?.reagentKey ??
+            i.getFlag?.(MODULE_ID, "reagentKey");
+          return key === spellEntry.reagentKey;
+        });
+
+        console.log(`[${MODULE_ID}] [consumptionLogic] resolved standard item:`, {
+          found: !!reagentItem, id: reagentItem?.id, name: reagentItem?.name
+        });
+
+        logLabel = reagentItem?.name ?? spellEntry.reagentKey;
+        console.log(`[${MODULE_ID}] ${actor.name} ${item.name} consuming standard reagent.`);
+      }
+
+      // ---------------------------------------------------------------------
+      // 🔹 Case 3 — Upgrade Available But Not Approved
+      // ---------------------------------------------------------------------
+      else if (spellEntry.hasUpgrade && !spellEntry.approvedUpgrade) {
+        console.log(`[${MODULE_ID}] [consumptionLogic] Upgrade available but NOT approved → skipping consumption`);
+        reagentTracker._castingActors.delete(actor.id);
+        return true;
+      }
+
+      // ---------------------------------------------------------------------
+      // 🔹 Safety
+      // ---------------------------------------------------------------------
+      if (!reagentItem) {
+        console.warn(`[${MODULE_ID}] ${actor.name} ${item.name} could not locate reagent item — skipping consumption.`);
+        reagentTracker._castingActors.delete(actor.id);
+        return true;
+      }
+
+      const guardKey = _makeConsumeKey(item, Date.now());
+      if (_castConsumeGuards.has(guardKey)) {
+        console.log(`[${MODULE_ID}] duplicate consumption guard for ${item.name} — skipping.`);
+        reagentTracker._castingActors.delete(actor.id);
+        return true;
+      }
+      _castConsumeGuards.add(guardKey);
+
+      // ---------------------------------------------------------------------
+      // 🔹 Determine quantity (fixed)
+      // ---------------------------------------------------------------------
+      let qtyNeeded = 1;
+      const spellQty = Number(spellEntry?.quantity ?? 0);
+      if (spellQty > 1) qtyNeeded = spellQty;
+
+      console.log(`[${MODULE_ID}] [consumptionLogic] using qtyNeeded=${qtyNeeded}`);
+
+      // ---------------------------------------------------------------------
+      // 🔹 Consume
+      // ---------------------------------------------------------------------
+      const res = await consumeReagentFromInventory(actor, reagentItem, qtyNeeded);
+      console.log(
+        `[${MODULE_ID}] CONSUME ${actor.name} ${item.name}: ${logLabel} → used ${res.consumed} (updates=${res.updates}, deleted=${res.deleted})`
+      );
+
+      // ---------------------------------------------------------------------
+      // 🔹 Clear flags and guards
+      // ---------------------------------------------------------------------
+      if (spellEntry.approvedUpgrade) {
+        console.log(`[${MODULE_ID}] [consumptionLogic] clearing approvedUpgrade after consumption`);
+        delete spellEntry.approvedUpgrade;
+      }
+
+      reagentTracker._castingActors.delete(actor.id);
+      console.log(`[${MODULE_ID}] cleared casting guard after ${item.name}`);
+
+      // ---------------------------------------------------------------------
+      // 🧠 Post-consumption cache rebuild (delayed)
+      // ---------------------------------------------------------------------
+      setTimeout(async () => {
+        try {
+          console.log(`[${MODULE_ID}] [consumptionLogic] rebuilding reagent cache for ${actor.name} post-consumption`);
+          await reagentTracker.reagentIntel?.buildActorReagentState(actor);
+        } catch (err) {
+          console.warn(`[${MODULE_ID}] post-consumption rebuild failed for ${actor.name}`, err);
+        }
+      }, 500);
+
+      return true;
+
+    } catch (err) {
+      console.error(`[${MODULE_ID}] consumptionLogic error`, err);
+      if (actor) reagentTracker._castingActors.delete(actor.id);
+      return true;
+    }
 }
 
 
@@ -787,7 +1070,6 @@ async function consumptionLogic(actor, item) {
 // ============================================================================
 // 🧱 dnd5e.preUseActivity — reagent enforcement with upgrade prompt + recast
 // ============================================================================
-
 Hooks.on("dnd5e.preUseActivity", (activity, config, options, userId) => {
   const MODULE_ID = "reagent-tracker";
   try {
@@ -806,15 +1088,13 @@ Hooks.on("dnd5e.preUseActivity", (activity, config, options, userId) => {
       item.system.preparation?.mode === "pact"; // include warlocks
 
     if (consumesSlot && level > 0) {
-      // try to locate the proper slot pool
       const slotData = Object.values(actor.system.spells).find(s => s.level === level);
       const slotsAvailable = slotData?.value ?? 0;
-
       if (slotsAvailable <= 0) {
         console.log(
           `[${MODULE_ID}] [preUseActivity] skipping reagent check — no spell slots left (level ${level})`
         );
-        return true; // allow Foundry/Midi to show its normal "no slots" warning
+        return true;
       }
     }
 
@@ -830,8 +1110,20 @@ Hooks.on("dnd5e.preUseActivity", (activity, config, options, userId) => {
       hasUpgrade: !!spellState?.hasUpgrade,
       hasExact: !!spellState?.hasExact,
       reagentKey: spellState?.reagentKey,
-      upgradeKey: spellState?.upgrade?.reagentKey
+      upgradeKey: spellState?.upgrade?.reagentKey,
+      bypassEnforcement: intel?.bypassEnforcement
     });
+
+    // -----------------------------------------------------------------------
+    // 🧩 0) Global bypassEnforcement check (Auto-Consume disabled)
+    // -----------------------------------------------------------------------
+    if (intel?.bypassEnforcement) {
+      console.log(
+        `[${MODULE_ID}] [preUseActivity] bypassEnforcement active → ${actor.name}/${item.name} will cast without reagent checks.`
+      );
+      reagentTracker._castingActors.add(actor.id); // prevent rebuild interference
+      return true;
+    }
 
     // -----------------------------------------------------------------------
     // 1) If an upgrade was approved earlier → allow cast
@@ -840,7 +1132,6 @@ Hooks.on("dnd5e.preUseActivity", (activity, config, options, userId) => {
       console.log(
         `[${MODULE_ID}] ⚡ approvedUpgrade=true → allow ${item.name} (consumption will handle clearing later)`
       );
-      // 🔒 mark actor as casting so rebuild hooks are suppressed
       reagentTracker._castingActors.add(actor.id);
       return true;
     }
@@ -854,10 +1145,8 @@ Hooks.on("dnd5e.preUseActivity", (activity, config, options, userId) => {
       state
     );
 
-    // If exact reagent present → allow cast
     if (state.ok === true) {
       console.log(`[${MODULE_ID}] ✅ exact reagent available → allow ${item.name}`);
-      // 🔒 mark actor as casting so rebuild hooks are suppressed
       reagentTracker._castingActors.add(actor.id);
       return true;
     }
@@ -871,7 +1160,6 @@ Hooks.on("dnd5e.preUseActivity", (activity, config, options, userId) => {
     );
 
     if (state.hasUpgrade && !spellState?.approvedUpgrade) {
-      // Fire prompt asynchronously (do NOT await; original cast ends now)
       console.log(`[${MODULE_ID}] [preUseActivity] prompting for higher-value reagent`, {
         upgradeName: state.upgrade?.itemName,
         upgradeKey: state.upgrade?.reagentKey
@@ -883,7 +1171,6 @@ Hooks.on("dnd5e.preUseActivity", (activity, config, options, userId) => {
           console.log(`[${MODULE_ID}] [preUseActivity] prompt resolved for ${item.name}:`, res);
           if (!res?.ok) return;
 
-          // Prompt sets approvedUpgrade (+ upgradeChoice). Re-validate and recast.
           const updatedIntel = reagentTracker.reagentIntel?.cache?.get(actor.id);
           const updatedState = updatedIntel?.spells?.[item.id];
           if (!updatedState?.approvedUpgrade) {
@@ -896,7 +1183,7 @@ Hooks.on("dnd5e.preUseActivity", (activity, config, options, userId) => {
           console.log(`[${MODULE_ID}] ♻️ recasting ${item.name} after approval`);
           try {
             const tempItem = new CONFIG.Item.documentClass(item.toObject(), { parent: actor });
-            await tempItem.use(); // triggers this hook again; passes due to approvedUpgrade
+            await tempItem.use();
           } catch (err) {
             console.error(`[${MODULE_ID}] recast error for ${item.name}`, err);
           }
@@ -904,14 +1191,13 @@ Hooks.on("dnd5e.preUseActivity", (activity, config, options, userId) => {
         .catch((err) => console.error(`[${MODULE_ID}] prompt/recast chain error`, err));
     }
 
-    return false; // hard block
+    return false;
 
   } catch (err) {
     console.error(`[${MODULE_ID}] Error in preUseActivity`, err);
     return true;
   }
 });
-
 
 
 // =====================================================================================
@@ -923,6 +1209,14 @@ Hooks.on("dnd5e.activityConsumption", async (activity, config, options) => {
     const actor = activity?.actor;
     const item  = activity?.item;
     if (!actor || !item || item.type !== "spell") return;
+
+    const intel = reagentTracker?.reagentIntel?.cache?.get(actor.id);
+    if (intel?.bypassEnforcement) {
+      console.log(
+        `[${MODULE_ID}] [activityConsumption] bypassEnforcement active → skipping reagent consumption for ${actor.name}/${item.name}.`
+      );
+      return; // 🚫 Skip consumption entirely
+    }
 
     console.log(`[${MODULE_ID}] ⚡ dnd5e.activityConsumption → ${actor.name}/${item.name}`);
     await consumptionLogic(actor, item);
@@ -988,17 +1282,14 @@ const SpellMapData =
             .map((s) => s.trim())
             .filter(Boolean);
         },
+        
       };
 
-
 // --- Retrieve reagent compendium packs configured for scanning ---------------
-function getConfiguredPacks() {
-  const raw = game.settings.get(MODULE_ID, "compendiumPacks") ?? "";
-  return String(raw)
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
+  function getConfiguredPacks() {
+    // Hard-code the reagent source now that we’ve dropped the user-selectable pack
+    return ["world.reagents"];
+  }
 
 
 /* -------------------------------------------------------------------------------------------------
@@ -1195,7 +1486,7 @@ class ReagentPicker extends FormApplication {
 
 
 /* -------------------------------------------------------------------------------------------------
- *  UI: SPELL MAP MANAGER
+ *  UI: SPELL MAP MANAGER (v33-clean)
  * ------------------------------------------------------------------------------------------------- */
 
 class SpellMapManager extends FormApplication {
@@ -1237,7 +1528,6 @@ class SpellMapManager extends FormApplication {
       })),
     }));
 
-    const packs = SpellMapData.packsToScan().join(", ");
     const counts = {
       total: rows.length,
       unmapped: rows.filter(r => r.status === "unmapped").length,
@@ -1246,7 +1536,7 @@ class SpellMapManager extends FormApplication {
       stale: rows.filter(r => r.status === "staleUUID").length,
     };
 
-    return { rows, packs, counts, empty: rows.length === 0 };
+    return { rows, counts, empty: rows.length === 0 };
   }
 
   /* -------------------------------------------- */
@@ -1254,18 +1544,6 @@ class SpellMapManager extends FormApplication {
     super.activateListeners(html);
 
     // --- Core controls ------------------------------------------------------
-
-    html.find("[data-action='scan-packs']").on("click", async () => {
-      try {
-        const btn = html.find("[data-action='scan-packs']");
-        btn.prop("disabled", true);
-        const res = await runSpellMapBuilder();
-        ui.notifications.info(`Spell scan: added ${res.added}, total ${res.total}`);
-        this.render(true);
-      } finally {
-        html.find("[data-action='scan-packs']").prop("disabled", false);
-      }
-    });
 
     html.find("[data-action='save']").on("click", async () => {
       try {
@@ -1352,32 +1630,6 @@ class SpellMapManager extends FormApplication {
       await SpellMapData.setMap(rows);
       this.render(true);
     });
-
-    // --- GM-only compendium repair -----------------------------------------
-    if (this.isGM) {
-      html.find("button.repair-compendium").on("click", async () => {
-        const repaired = await reagentTracker.repairReagentCompendium();
-        ui.notifications.info(`Repaired ${repaired} reagent(s) in world.reagents.`);
-      });
-    }
-
-    // --- 🧩 Per-spell and select-all blocking toggles -----------------------
-
-    html.find("input[data-action='toggle-block']").on("change", async (ev) => {
-      const idx = Number(ev.currentTarget.dataset.index);
-      const rows = SpellMapData.getMap();
-      if (!rows[idx]) return;
-      rows[idx].blockIfMissing = ev.currentTarget.checked;
-      await SpellMapData.setMap(rows);
-    });
-
-    html.find("input[data-action='toggle-block-all']").on("change", async (ev) => {
-      const checked = ev.currentTarget.checked;
-      const rows = SpellMapData.getMap();
-      for (const r of rows) r.blockIfMissing = checked;
-      await SpellMapData.setMap(rows);
-      html.find("input[data-action='toggle-block']").prop("checked", checked);
-    });
   }
 
   /* -------------------------------------------- */
@@ -1397,6 +1649,7 @@ class SpellMapManager extends FormApplication {
     });
   }
 }
+
 
 
 /* -------------------------------------------------------------------------------------------------
@@ -1604,6 +1857,71 @@ async function repairReagentCompendium() {
   return { fixedComp, fixedMap, fixedActors };
 }
 
+// -----------------------------------------------------------------------------
+// 🌱 v32a Define helper function immediately (available globally to main.js)
+// -----------------------------------------------------------------------------
+async function applyAutoConsumeSetting() {
+  const MODULE_ID = "reagent-tracker";
+  try {
+    const setting = game.settings.get(MODULE_ID, "autoConsumeOnCast");
+    const spellMap = reagentTracker?.reagentIntel?.spellMap;
+    if (!spellMap) {
+      console.warn(`[${MODULE_ID}] Spell Map is undefined or null at init.`);
+    } else {
+      console.log(`[${MODULE_ID}] Spell Map object detected at init.`, spellMap);
+      console.log(`[${MODULE_ID}] Spell Map keys:`, Object.keys(spellMap ?? {}));
+      console.log(`[${MODULE_ID}] Spell Map type:`, Array.isArray(spellMap) ? "Array" : typeof spellMap);
+    }
+
+    const backupKey = "consumeBackup";
+
+    if (setting === false) {
+      const backup = {};
+      for (const [spellId, entry] of Object.entries(spellMap)) {
+        backup[spellId] = entry?.consumed ?? false;
+        if (entry?.consumed) entry.consumed = false;
+      }
+      await game.settings.set(MODULE_ID, backupKey, JSON.stringify(backup));
+      console.log(`[${MODULE_ID}] Auto-consume disabled: ${Object.keys(backup).length} entries backed up.`);
+      return;
+    }
+
+    const backupJSON = game.settings.get(MODULE_ID, backupKey);
+    if (backupJSON) {
+      const backup = JSON.parse(backupJSON);
+      let restored = 0;
+      for (const [spellId, consumeFlag] of Object.entries(backup)) {
+        if (spellMap[spellId]) {
+          spellMap[spellId].consumed = consumeFlag;
+          restored++;
+        }
+      }
+      await game.settings.set(MODULE_ID, backupKey, "");
+      console.log(`[${MODULE_ID}] Auto-consume re-enabled: restored ${restored} entries.`);
+    }
+  } catch (err) {
+    console.error(`[${MODULE_ID}] Error applying AutoConsume setting:`, err);
+  }
+}
+
+// Hooks.once("reagent-tracker.spellMapReady", async () => {
+//   console.log("[reagent-tracker] Spell Map ready → applying AutoConsume settings...");
+
+//   // Poll every 100ms until spellMap is populated (max 5 seconds)
+//   let tries = 0;
+//   const checkInterval = setInterval(async () => {
+//     const spellMap = globalThis.SpellMapData ?? reagentTracker?.SpellMapData;
+//     if (spellMap && Object.keys(spellMap).length > 0) {
+//       clearInterval(checkInterval);
+//       console.log(`[reagent-tracker] Spell Map found after ${tries * 100}ms, applying settings...`);
+//       await applyAutoConsumeSetting();
+//     } else if (++tries > 50) {
+//       clearInterval(checkInterval);
+//       console.warn("[reagent-tracker] Spell Map still undefined after 5s — skipping AutoConsume sync.");
+//     }
+//   }, 100);
+// });
+
 
 
 // ------------------------------------------------------------------------------------------------
@@ -1611,38 +1929,47 @@ async function repairReagentCompendium() {
 // ------------------------------------------------------------------------------------------------
 function registerSettings() {
   // --- Basic toggles --------------------------------------------------------
-  game.settings.register(MODULE_ID, "healthcheck", {
-    name: "Healthcheck",
-    hint: "If you can see this, settings registered.",
-    scope: "world", config: true, type: Boolean, default: true
-  });
+  // game.settings.register(MODULE_ID, "healthcheck", {
+  //   name: "Healthcheck",
+  //   hint: "If you can see this, settings registered.",
+  //   scope: "world", config: true, type: Boolean, default: true
+  // });
 
-  game.settings.register(MODULE_ID, "preferMidi", {
-    name: "Use Midi-QOL if available",
-    hint: "If enabled and Midi-QOL is active, enforcement runs on Midi’s workflow too.",
-    scope: "world", config: true, type: Boolean, default: true
-  });
+  // game.settings.register(MODULE_ID, "preferMidi", {
+  //   name: "Use Midi-QOL if available",
+  //   hint: "If enabled and Midi-QOL is active, enforcement runs on Midi’s workflow too.",
+  //   scope: "world", config: true, type: Boolean, default: true
+  // });
 
-  game.settings.register(MODULE_ID, "showBlockChat", {
-    name: "Show Chat Message When Blocked",
-    scope: "client", config: true, type: Boolean, default: true
-  });
+  // game.settings.register(MODULE_ID, "showBlockChat", {
+  //   name: "Show Chat Message When Blocked",
+  //   scope: "client", config: true, type: Boolean, default: true
+  // });
 
-  game.settings.register(MODULE_ID, "showFallbackNotice", {
-    name: "GM Notice on Fallback",
-    scope: "world", config: true, type: Boolean, default: true
-  });
+  // game.settings.register(MODULE_ID, "showFallbackNotice", {
+  //   name: "GM Notice on Fallback",
+  //   scope: "world", config: true, type: Boolean, default: true
+  // });
 
+  // game.settings.register(MODULE_ID, "compendiumPacks", {
+  //   name: "Reagent Compendium Packs",
+  //   hint: "Comma-separated list of packs, e.g. 'reagent-tracker.reagents,my-xge.reagents'",
+  //   scope: "world", config: true, type: String, default: `${MODULE_ID}.reagents`
+  // });
+
+  //Removing the option of which compendium pack to use
   game.settings.register(MODULE_ID, "compendiumPacks", {
-    name: "Reagent Compendium Packs",
-    hint: "Comma-separated list of packs, e.g. 'reagent-tracker.reagents,my-xge.reagents'",
-    scope: "world", config: true, type: String, default: `${MODULE_ID}.reagents`
-  });
+  scope: "world",
+  config: false,
+  type: String,
+  default: "world.reagents"
+});
 
-  game.settings.register(MODULE_ID, "showEchoNotice", {
-    name: "Popup Reagent Reminder on Cast",
-    scope: "client", config: true, type: Boolean, default: false
-  });
+
+  // game.settings.register(MODULE_ID, "showEchoNotice", {
+  //   name: "Popup Reagent Reminder on Cast",
+  //   scope: "client", config: true, type: Boolean, default: false
+  // });
 
   // --- Unified persistent spell map (replaces spellReagentMap) -------------
   game.settings.register(MODULE_ID, "spellMap", {
@@ -1656,10 +1983,38 @@ function registerSettings() {
     scope: "world", config: true, type: String, default: "dnd5e.spells"
   });
 
+
+  // ---AutoConsumeOnCast checkbox-----------------------------------
   game.settings.register(MODULE_ID, "autoConsumeOnCast", {
     name: "Auto-consume reagents on cast",
-    scope: "world", config: true, type: Boolean, default: true
+    hint:
+      "When disabled, reagent consumption is turned off globally. " +
+      "Re-enabling will restore your previous consume states (if a backup exists).",
+    scope: "world",
+    config: true,
+    type: Boolean,
+    default: true,
+
+    onChange: async (value) => {
+      try {
+        const prev = game.settings.get(MODULE_ID, "autoConsumeLastState");
+        await game.settings.set(MODULE_ID, "autoConsumeLastState", value);
+        await reagentTracker.applyAutoConsumeChange(value, prev);
+      } catch (err) {
+        console.error(`[${MODULE_ID}] Error calling applyAutoConsumeChange:`, err);
+      }
+    }
   });
+
+  // --- Hidden tracking of previous Auto-Consume state --------------
+  game.settings.register(MODULE_ID, "autoConsumeLastState", {
+    scope: "world",
+    config: false,
+    type: Boolean,
+    default: true
+  });
+
+
 
   // --- Menu: Open Spell Map ------------------------------------------------
   game.settings.registerMenu(MODULE_ID, "openSpellMap", {
@@ -1687,11 +2042,10 @@ function registerSettings() {
     restricted: true
   });
 
-
   // --- Menu: Build Reagent Compendium -------------------------------------
   game.settings.registerMenu(MODULE_ID, "openReagentCompendiumBuilder", {
-    name: "Build Reagent Compendium",
-    label: "Build Compendium",
+    name: "Repair Reagent Compendium",
+    label: "Repair Data Sources",
     icon: "fas fa-boxes-stacked",
     type: class ReagentCompendiumBuilderButton extends FormApplication {
       async render() {
@@ -1703,7 +2057,6 @@ function registerSettings() {
     restricted: true
   });
 }
-
 
 /* -------------------------------------------------------------------------------------------------
  *  MENU CLASS (separate to avoid brace confusion)
@@ -1780,8 +2133,18 @@ async function buildDefaultReagentCompendium() {
       console.log(`[${MODULE_ID}] Deleting ${docs.length} documents...`);
       await pack.documentClass.deleteDocuments(docs.map(d => d.id), { pack: pack.metadata.id });
       await pack.getIndex({ reload: true });
-      pack.documentCache.clear();
+
+      // Foundry v13+ compatibility: safely clear cached docs if API present
+      if (typeof pack.clear === "function") {
+        await pack.clear();
+        console.log(`[${MODULE_ID}] ${packId} cache cleared via pack.clear()`);
+      } else if (pack.documentCache && typeof pack.documentCache.clear === "function") {
+        pack.documentCache.clear();
+        console.log(`[${MODULE_ID}] ${packId} cache cleared via documentCache.clear()`);
+      }
+
       console.log(`[${MODULE_ID}] ${packId} cleared.`);
+
     }
 
     // 📦 Load Default Reagent Data
@@ -1841,5 +2204,5 @@ async function buildDefaultReagentCompendium() {
   }
 }
 
-// At the very bottom of main.js add this temporary marker:
+// Test for final load verification:
 console.log("✅ main.js loaded without syntax errors");

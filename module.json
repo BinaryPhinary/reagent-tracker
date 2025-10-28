@@ -2,31 +2,33 @@
   "id": "reagent-tracker",
   "title": "Reagent Tracker",
   "description": "Track and consume spellcasting reagents automatically. Provides an editable global reagent table and compendium sync.",
-  "version": "0.1.0",
+  "version": "0.33",
   "compatibility": {
     "minimum": "13",
     "verified": "13"
   },
   "authors": [
     {
-      "name": "Your Name",
+      "name": "BinaryPhinary",
       "url": "https://github.com/yourname",
       "email": "you@example.com"
     }
   ],
   "esmodules": [
-    "scripts/main.js"
+    "scripts/main.js",
+    "scripts/reagent-intel.js"
   ],
   "styles": [],
   "packs": [
-    {
-      "label": "Reagents",
-      "name": "reagents",
-      "path": "packs/reagents.db",
-      "type": "Item",
-      "private": false
-    }
-  ],
+  {
+    "label": "Reagents",
+    "name": "reagents",
+    "path": "packs/reagents.db",
+    "type": "Item",
+    "private": false,
+    "system": "dnd5e"
+  }
+],
   "languages": [],
   "socket": false,
   "manifest": "https://raw.githubusercontent.com/yourname/reagent-tracker/main/module.json",

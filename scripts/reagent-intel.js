@@ -231,7 +231,12 @@ async buildActorReagentState(actor) {
     hasUpgrades: all.some(s => s.hasUpgrade),
     mappedCount: all.length,
     totalSpells: spellItems.length
+    
   };
+
+  out.bypassEnforcement = game.settings.get("reagent-tracker", "autoConsumeOnCast") === false;
+
+
 
   // --- Cache + Log -------------------------------------------------------
   this.cache.set(actor.id, out);
@@ -321,6 +326,8 @@ function initializeSceneCasters() {
   }
 
   console.log(`[${MODULE_ID}] initializeSceneCasters → ${activeSceneActors.size} player actor(s) on scene.`);
+  Hooks.callAll("reagent-tracker.spellMapReady", reagentTracker.reagentIntel.spellMap);
+
 }
 
 function onTokenCreate(tokenDoc) {
@@ -690,6 +697,41 @@ Hooks.on("reagent-tracker.spellMapUpdated", async () => {
     console.error(`${TAG} failed to rebuild cache:`, err);
   }
 });
+
+Hooks.on("reagent-tracker.spellMapUpdated", async (map) => {
+  const TAG = `[${MODULE_ID}][spellMapBackup:v32c]`;
+  try {
+    // Safely resolve stored value from world scope
+    const store = game.settings.storage?.get("world");
+    const setting = store?.getItem
+      ? JSON.parse(store.getItem(`${MODULE_ID}.autoConsumeOnCast`) ?? "true")
+      : game.settings.get(MODULE_ID, "autoConsumeOnCast");
+
+    if (!setting) {
+      console.log(`${TAG} skipped — AutoConsume disabled (world value).`);
+      return;
+    }
+
+    const backupFn =
+      globalThis.reagentTracker?.backupSpellMap ??
+      game.modules.get(MODULE_ID)?.api?.backupSpellMap ??
+      globalThis.backupSpellMap;
+
+    if (typeof backupFn !== "function") {
+      console.warn(`${TAG} skipped — no backup function exposed.`);
+      return;
+    }
+
+    const payload = Array.isArray(map) && map.length ? map : SpellMapData.getMap();
+    console.log(`${TAG} running backup after Spell Map update...`);
+    await backupFn(payload);
+    console.log(`${TAG} backup complete.`);
+  } catch (err) {
+    console.error(`${TAG} backup failed:`, err);
+  }
+});
+
+
 // Do a refresh of the cache on a long rest v31j
 Hooks.on("dnd5e.restCompleted", async (actor, data, options) => {
   if (!(actor instanceof Actor) || actor.type === "npc") return;
@@ -704,8 +746,6 @@ Hooks.on("dnd5e.restCompleted", async (actor, data, options) => {
   reagentIntel.invalidateReagentState(actor);
   await reagentIntel.buildActorReagentState(actor);
 });
-
-
 
 
 Hooks.once("midi-qol.preItemRollV2", async (wrapper) => {
