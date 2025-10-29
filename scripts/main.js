@@ -1904,72 +1904,21 @@ async function applyAutoConsumeSetting() {
   }
 }
 
-// Hooks.once("reagent-tracker.spellMapReady", async () => {
-//   console.log("[reagent-tracker] Spell Map ready → applying AutoConsume settings...");
-
-//   // Poll every 100ms until spellMap is populated (max 5 seconds)
-//   let tries = 0;
-//   const checkInterval = setInterval(async () => {
-//     const spellMap = globalThis.SpellMapData ?? reagentTracker?.SpellMapData;
-//     if (spellMap && Object.keys(spellMap).length > 0) {
-//       clearInterval(checkInterval);
-//       console.log(`[reagent-tracker] Spell Map found after ${tries * 100}ms, applying settings...`);
-//       await applyAutoConsumeSetting();
-//     } else if (++tries > 50) {
-//       clearInterval(checkInterval);
-//       console.warn("[reagent-tracker] Spell Map still undefined after 5s — skipping AutoConsume sync.");
-//     }
-//   }, 100);
-// });
-
 
 
 // ------------------------------------------------------------------------------------------------
 // 🧩 registerSettings (v31a unified)
 // ------------------------------------------------------------------------------------------------
 function registerSettings() {
-  // --- Basic toggles --------------------------------------------------------
-  // game.settings.register(MODULE_ID, "healthcheck", {
-  //   name: "Healthcheck",
-  //   hint: "If you can see this, settings registered.",
-  //   scope: "world", config: true, type: Boolean, default: true
-  // });
 
-  // game.settings.register(MODULE_ID, "preferMidi", {
-  //   name: "Use Midi-QOL if available",
-  //   hint: "If enabled and Midi-QOL is active, enforcement runs on Midi’s workflow too.",
-  //   scope: "world", config: true, type: Boolean, default: true
-  // });
+    //Removing the option of which compendium pack to use
+    game.settings.register(MODULE_ID, "compendiumPacks", {
+    scope: "world",
+    config: false,
+    type: String,
+    default: "world.reagents"
+  });
 
-  // game.settings.register(MODULE_ID, "showBlockChat", {
-  //   name: "Show Chat Message When Blocked",
-  //   scope: "client", config: true, type: Boolean, default: true
-  // });
-
-  // game.settings.register(MODULE_ID, "showFallbackNotice", {
-  //   name: "GM Notice on Fallback",
-  //   scope: "world", config: true, type: Boolean, default: true
-  // });
-
-  // game.settings.register(MODULE_ID, "compendiumPacks", {
-  //   name: "Reagent Compendium Packs",
-  //   hint: "Comma-separated list of packs, e.g. 'reagent-tracker.reagents,my-xge.reagents'",
-  //   scope: "world", config: true, type: String, default: `${MODULE_ID}.reagents`
-  // });
-
-  //Removing the option of which compendium pack to use
-  game.settings.register(MODULE_ID, "compendiumPacks", {
-  scope: "world",
-  config: false,
-  type: String,
-  default: "world.reagents"
-});
-
-
-  // game.settings.register(MODULE_ID, "showEchoNotice", {
-  //   name: "Popup Reagent Reminder on Cast",
-  //   scope: "client", config: true, type: Boolean, default: false
-  // });
 
   // --- Unified persistent spell map (replaces spellReagentMap) -------------
   game.settings.register(MODULE_ID, "spellMap", {
