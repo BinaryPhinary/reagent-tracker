@@ -31,7 +31,7 @@
   "socket": false,
 
   "manifest": "https://raw.githubusercontent.com/BinaryPhinary/reagent-tracker/master/module.json",
-  "download": "https://github.com/BinaryPhinary/reagent-tracker/releases/latest/download/module.zip",
+  "download": "https://github.com/BinaryPhinary/reagent-tracker/releases/download/0.35/modules.zip",
   "readme": "https://github.com/BinaryPhinary/reagent-tracker#readme",
   "url": "https://github.com/BinaryPhinary/reagent-tracker",
   "license": "MIT"
