@@ -1,12 +1,11 @@
 {
   "id": "reagent-tracker",
   "title": "Reagent Tracker",
+  "type": "module",
+  "version": "0.34.2",
+
   "description": "Automatically track and consume spellcasting reagents for D&D 5e. Includes an editable global reagent table and synchronized reagent compendium.",
-  "version": "0.34.1",
-  "compatibility": {
-    "minimum": "13",
-    "verified": "13"
-  },
+
   "authors": [
     {
       "name": "BinaryPhinary",
@@ -15,10 +14,16 @@
     }
   ],
 
+  "compatibility": {
+    "minimum": "13",
+    "verified": "13"
+  },
+
   "esmodules": [
     "scripts/main.js",
     "scripts/reagent-intel.js"
   ],
+
   "styles": [],
 
   "packs": [
@@ -32,13 +37,7 @@
     }
   ],
 
-  "languages": [
-    {
-      "lang": "en",
-      "name": "English",
-      "path": "lang/en.json"
-    }
-  ],
+  "languages": [],
 
   "socket": false,
 
