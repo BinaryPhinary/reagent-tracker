@@ -2,7 +2,7 @@
   "id": "reagent-tracker",
   "title": "Reagent Tracker",
   "type": "module",
-  "version": "0.34.2",
+  "version": "0.35",
 
   "description": "Automatically track and consume spellcasting reagents for D&D 5e. Includes an editable global reagent table and synchronized reagent compendium.",
 
