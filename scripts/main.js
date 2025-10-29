@@ -930,13 +930,17 @@ globalThis.reagentTracker.applyAutoConsumeChange = async function (value, prev) 
       _castConsumeGuards.add(guardKey);
 
       // ---------------------------------------------------------------------
-      // 🔹 Determine quantity (fixed)
+      // 🔹 Determine quantity (fixed per SpellMap definition)
       // ---------------------------------------------------------------------
       let qtyNeeded = 1;
-      const spellQty = Number(spellEntry?.quantity ?? 0);
-      if (spellQty > 1) qtyNeeded = spellQty;
 
+      // Prefer the SpellMap reagent's quantity if available
+      const spellReagentQty = Number(spellEntry?.reagents?.[0]?.quantity ?? 0);
+      if (spellReagentQty > 0) qtyNeeded = spellReagentQty;
+
+      // Otherwise fall back to 1 (default)
       console.log(`[${MODULE_ID}] [consumptionLogic] using qtyNeeded=${qtyNeeded}`);
+
 
       // ---------------------------------------------------------------------
       // 🔹 Consume

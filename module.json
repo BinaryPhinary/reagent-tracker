@@ -26,17 +26,6 @@
 
   "styles": [],
 
-  "packs": [
-    {
-      "label": "Reagents",
-      "name": "reagents",
-      "path": "packs/reagents.db",
-      "type": "Item",
-      "system": "dnd5e",
-      "private": false
-    }
-  ],
-
   "languages": [],
 
   "socket": false,
