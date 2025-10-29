@@ -34,12 +34,12 @@ function _isSameReagentFamily(it, reagent) {
   return it.name.toLowerCase().includes(baseName);
 }
 
-/** Find the best upgraded reagent owned by the actor. */
+/** Find the *lowest-cost sufficient* upgraded reagent owned by the actor. */
 export function findUpgradedReagentOnActor(actor, need) {
   if (!(actor instanceof Actor) || !need?.reagentKey) return null;
 
   const minCost = Number(need.minCost ?? need.gpValue ?? 0) || 0;
-  let best = null;
+  const candidates = [];
 
   for (const it of actor.items?.contents ?? []) {
     if (!["loot", "consumable"].includes(it.type)) continue;
@@ -48,12 +48,16 @@ export function findUpgradedReagentOnActor(actor, need) {
     if (!_isSameReagentFamily(it, need)) continue;
 
     const val = _gpValueOfItem(it);
-    if (val <= minCost) continue;
-
-    if (!best || val > best.valueGP) best = { item: it, valueGP: val };
+    if (val >= minCost) {
+      candidates.push({ item: it, valueGP: val });
+    }
   }
-  return best;
+
+  // Sort ascending by gp value and return the cheapest sufficient reagent
+  candidates.sort((a, b) => a.valueGP - b.valueGP);
+  return candidates[0] ?? null;
 }
+
 
 
 // ============================================================================
